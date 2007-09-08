@@ -12,11 +12,11 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 =head1 VERSION
 
-Version 0.01 for Sphinx 0.9.8-20070818
+Version 0.02 for Sphinx 0.9.8-20070818
 
 =cut
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 SYNOPSIS
 
@@ -601,7 +601,7 @@ match (in this group) according to current sorting function. The final result
 set contains one best match per group, with grouping function value and matches
 count attached.
 
-$attr is any valid attribute.
+$attr is any valid attribute.  To disable grouping, set $attr to "".
 
 $func is one of:
 
@@ -784,44 +784,40 @@ sub Query {
 
     my $req;
     $req = pack ( "NNNN", $self->{_offset}, $self->{_limit}, $self->{_mode}, $self->{_sort} ); # mode and limits
-    $req .= pack ( "N", length($self->{_sortby}) ) . $self->{_sortby};
-    $req .= pack ( "N", length($query) ) . $query; # query itself
-    $req .= pack ( "N", scalar(@{$self->{_weights}}) );	# weights
-    foreach my $weight (@{$self->{_weights}}) {
-	$req .= pack ( "N", int($weight));
-    }
-    $req .= pack ( "N", length($index) ) . $index; # indexes
-    $req .=	pack ( "NNN", 0, int($self->{_min_id}), int($self->{_max_id}) ); # id32 range
+    $req .= pack ( "N/a*", $self->{_sortby});
+    $req .= pack ( "N/a*", $query ); # query itself
+    $req .= pack ( "N*", scalar(@{$self->{_weights}}), @{$self->{_weights}});
+    $req .= pack ( "N/a*", $index); # indexes
+    $req .= pack ( "NNN", 0, int($self->{_min_id}), int($self->{_max_id}) ); # id32 range
 
     # filters
     $req .= pack ( "N", scalar(keys %{$self->{_min}}) + scalar(keys %{$self->{_filter}}) );
 
     foreach my $attr (keys %{$self->{_min}}) {
 	$req .= 
-	    pack ( "N", length($attr) ) . $attr .
+	    pack ( "N/a*", $attr) .
 	    pack ( "NNNN", 3, 0, $self->{_min}{$attr}, $self->{_max}{$attr} );
     }
 
     foreach my $attr (keys %{$self->{_filter}}) {
 	my $values = $self->{_filter}{$attr};
 	$req .=
-	    pack ( "N", length($attr) ) . $attr .
+	    pack ( "N/a*", $attr) .
 	    pack ( "N*", scalar(@$values), @$values );
     }
 
     # group-by clause, max-matches count, group-sort clause, cutoff count
-    $req .= pack ( "NN", $self->{_groupfunc}, length($self->{_groupby}) ) . $self->{_groupby};
+    $req .= pack ( "NN/a*", $self->{_groupfunc}, $self->{_groupby} );
     $req .= pack ( "N", $self->{_maxmatches} );
-    $req .= pack ( "N", length($self->{_groupsort}) ) . $self->{_groupsort};
+    $req .= pack ( "N/a*", $self->{_groupsort});
     $req .= pack ( "NNN", $self->{_cutoff}, $self->{_retrycount}, $self->{_retrydelay} );
-    $req .= pack ( "N", length($self->{_groupdistinct}) ) . $self->{_groupdistinct};
+    $req .= pack ( "N/a*", $self->{_groupdistinct});
 
     ##################
     # send query, get response
     ##################
 
-    my $len = length($req);
-    $req = pack ( "nnN", SEARCHD_COMMAND_SEARCH, VER_COMMAND_SEARCH, $len ) . $req; # add header
+    $req = pack ( "nnN/a*", SEARCHD_COMMAND_SEARCH, VER_COMMAND_SEARCH, $req); # add header
     send($fp, $req ,0);
 
     my $response = $self->_GetResponse ( $fp, VER_COMMAND_SEARCH );
@@ -986,9 +982,9 @@ sub BuildExcerpts {
 	$req .= pack ( "N", length($words) ) . $words; # req words
 
 	# options
-	$req .= pack ( "N", length($opts->{"before_match"}) ) . $opts->{"before_match"};
-	$req .= pack ( "N", length($opts->{"after_match"}) ) . $opts->{"after_match"};
-	$req .= pack ( "N", length($opts->{"chunk_separator"}) ) . $opts->{"chunk_separator"};
+	$req .= pack ( "N/a*", $opts->{"before_match"});
+	$req .= pack ( "N/a*", $opts->{"after_match"});
+	$req .= pack ( "N/a*", $opts->{"chunk_separator"});
 	$req .= pack ( "N", int($opts->{"limit"}) );
 	$req .= pack ( "N", int($opts->{"around"}) );
 
@@ -996,15 +992,14 @@ sub BuildExcerpts {
 	$req .= pack ( "N", scalar(@$docs) );
 	foreach my $doc (@$docs) {
 		croak('BuildExcepts: Found empty document in $docs') unless ($doc);
-		$req .= pack("N", length($doc)) . $doc;
+		$req .= pack("N/a*", $doc);
 	}
 
 	##########################
         # send query, get response
 	##########################
 
-	my $len = length($req);
-	$req = pack ( "nnN", SEARCHD_COMMAND_EXCERPT, VER_COMMAND_EXCERPT, $len ) . $req; # add header
+	$req = pack ( "nnN/a*", SEARCHD_COMMAND_EXCERPT, VER_COMMAND_EXCERPT, $req); # add header
 	send($fp, $req ,0);
 	
 	my $response = $self->_GetResponse($fp, VER_COMMAND_EXCERPT);
@@ -1081,11 +1076,11 @@ sub UpdateAttributes  {
     }
 
     ## build request
-    my $req = pack ( "N", length($index) ) . $index;
+    my $req = pack ( "N/a*", $index);
 
     $req .= pack ( "N", scalar @$attrs );
     for my $attr (@$attrs) {
-	$req .= pack ( "N", length($attr) ) . $attr;
+	$req .= pack ( "N/a*", $attr);
     }
     $req .= pack ( "N", scalar keys %$values );
     foreach my $id (keys %$values) {
@@ -1099,8 +1094,7 @@ sub UpdateAttributes  {
     ## connect, send query, get response
     my $fp = $self->_Connect() or return undef;
 
-    my $len = length($req);
-    $req = pack ( "nnN", SEARCHD_COMMAND_UPDATE, VER_COMMAND_UPDATE, $len ) . $req; ## add header
+    $req = pack ( "nnN/a*", SEARCHD_COMMAND_UPDATE, VER_COMMAND_UPDATE, $req); ## add header
     send ( $fp, $req, 0);
 
     my $response = $self->_GetResponse ( $fp, VER_COMMAND_UPDATE );

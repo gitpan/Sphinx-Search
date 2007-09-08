@@ -16,6 +16,7 @@ use File::SearchPath qw/searchpath/;
 use Path::Class;
 use Sphinx::Search;
 use Socket;
+use encoding 'utf8';
 
 my $searchd = $ENV{SPHINX_SEARCHD} || searchpath('searchd');
 my $indexer = $ENV{SPHINX_INDEXER} || searchpath('indexer');
@@ -66,7 +67,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 31;
+plan tests => 33;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -200,6 +201,11 @@ ok($results, "Results for 'bb'");
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 3, "Update attributes, grouping");
 
+# UTF-8 test
+$sphinx->SetGroupBy("", SPH_GROUPBY_ATTR);
+$results = $sphinx->Query("bb\x{2122}");
+ok($results, "UTF-8");
+ok($results->{total} == 5, "UTF-8 results count");
 #use Data::Dumper;
 #print Dumper($results);
 
@@ -251,6 +257,7 @@ sub write_config {
 	source = test_jjs_src
 	path = $testdir/test_jjs
 	min_word_len = 1
+	charset_type = utf-8
     }
     searchd {
 	port = $sph_port
