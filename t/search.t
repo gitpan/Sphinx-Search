@@ -67,7 +67,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 33;
+plan tests => 36;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -206,6 +206,21 @@ $sphinx->SetGroupBy("", SPH_GROUPBY_ATTR);
 $results = $sphinx->Query("bb\x{2122}");
 ok($results, "UTF-8");
 ok($results->{total} == 5, "UTF-8 results count");
+
+# Batch interface
+$sphinx->AddQuery("ccc");
+$sphinx->AddQuery("dddd");
+$results = $sphinx->RunQueries;
+ok(@$results == 2, "Results for batch query");
+
+# Batch interface with error
+$sphinx->SetMatchMode(SPH_MATCH_EXTENDED);
+$sphinx->AddQuery("ccc \@dddd");
+$sphinx->AddQuery("dddd");
+$results = $sphinx->RunQueries;
+ok(@$results == 2, "Results for batch query with error");
+ok($results->[0]->{error}, "Error result");
+
 #use Data::Dumper;
 #print Dumper($results);
 

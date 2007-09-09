@@ -12,11 +12,15 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 =head1 VERSION
 
-Version 0.02 for Sphinx 0.9.8-20070818
+This version is 0.03.
+
+Use version 0.03 for Sphinx 0.9.8-cvs-20070907 and later
+
+Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 =head1 SYNOPSIS
 
@@ -50,7 +54,7 @@ use constant SEARCHD_COMMAND_EXCERPT	=> 1;
 use constant SEARCHD_COMMAND_UPDATE	=> 2;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x10C;
+use constant VER_COMMAND_SEARCH		=> 0x10D;
 use constant VER_COMMAND_EXCERPT	=> 0x100;
 use constant VER_COMMAND_UPDATE	        => 0x100;
 
@@ -145,6 +149,7 @@ sub new {
 	_warning	=> '',
 	_connection     => undef,
 	_persistent_connection => 0,
+	_reqs           => [],
     };
     bless($self, $class);
 
@@ -729,7 +734,7 @@ sub SetRetries {
 
 =head2 Query
 
-    $results = $sphinx->Query($query, $index);
+    $results = $sph->Query($query, $index);
 
 Connect to searchd server and run given search query.
 
@@ -776,7 +781,40 @@ sub Query {
     my $query = shift;
     my $index = shift || '*';
 
-    my $fp = $self->_Connect() or return undef;
+    croak("_reqs is not empty") unless @{$self->{_reqs}} == 0;
+
+    $self->AddQuery($query, $index);
+    my $results = $self->RunQueries or return undef;
+    $self->_Error($results->[0]->{error}) if $results->[0]->{error};
+    $self->_Warning($results->[0]->{warning}) if $results->[0]->{warning};
+    
+    return $results->[0];
+}
+
+=head2 AddQuery
+
+   $sph->AddQuery($query, $index);
+
+Add a query to a batch request.
+
+Batch queries enable searchd to perform internal optimizations,
+if possible; and reduce network connection overheads in all cases.
+
+For instance, running exactly the same query with different
+groupby settings will enable searched to perform expensive
+full-text search and ranking operation only once, but compute
+multiple groupby results from its output.
+
+Parameters are exactly the same as in Query() call.
+
+Returns corresponding index to the results array returned by RunQueries() call.
+
+=cut
+
+sub AddQuery {
+    my $self = shift;
+    my $query = shift;
+    my $index = shift || '*';
 
     ##################
     # build request
@@ -813,13 +851,58 @@ sub Query {
     $req .= pack ( "NNN", $self->{_cutoff}, $self->{_retrycount}, $self->{_retrydelay} );
     $req .= pack ( "N/a*", $self->{_groupdistinct});
 
+    push(@{$self->{_reqs}}, $req);
+
+    return scalar $#{$self->{_reqs}};
+}
+
+=head2 RunQueries
+
+    $sph->RunQueries
+
+Run batch of queries, as added by AddQuery.
+
+Returns undef on network IO failure.
+
+Returns an array of result sets on success.
+
+Each result set in the returned array is a hash which contains
+the same keys as the hash returned by L<Query>, plus:
+
+=over 4 
+
+=item * error 
+
+Errors, if any, for this query.
+
+=item * warnings
+	
+Any warnings associated with the query.
+
+=back
+
+=cut
+
+sub RunQueries {
+    my $self = shift;
+
+    unless (@{$self->{_reqs}}) {
+	$self->_Error("no queries defined, issue AddQuery() first");
+	return undef;
+    }
+
+    my $fp = $self->_Connect() or return undef;
+
     ##################
     # send query, get response
     ##################
-
+    my $nreqs = @{$self->{_reqs}};
+    my $req = pack("Na*", $nreqs, join("", @{$self->{_reqs}}));
     $req = pack ( "nnN/a*", SEARCHD_COMMAND_SEARCH, VER_COMMAND_SEARCH, $req); # add header
     send($fp, $req ,0);
 
+    $self->{_reqs} = [];
+		   
     my $response = $self->_GetResponse ( $fp, VER_COMMAND_SEARCH );
     return undef unless $response;
 
@@ -827,82 +910,104 @@ sub Query {
     # parse response
     ##################
 
-    my $result = {};		# Empty hash ref
-    $result->{matches} = [];	# Empty array ref
+    my $p = 0;
     my $max = length($response); # Protection from broken response
 
-    # read schema
-    my $p = 0;
-    my @fields;
-    my (%attrs, @attr_list);
+    my @results;
+    for (my $ires = 0; $ires < $nreqs; $ires++) {
+	my $result = {};	# Empty hash ref
+	push(@results, $result);
+	$result->{matches} = []; # Empty array ref
+	$result->{error} = "";
+	$result->{warnings} = "";
 
-    my $nfields = unpack ( "N", substr ( $response, $p, 4 ) ); $p += 4;
-    while ( $nfields-->0 && $p<$max ) {
-	my $len = unpack ( "N", substr ( $response, $p, 4 ) ); $p += 4;
-	push(@fields, substr ( $response, $p, $len )); $p += $len;
-    }
-    $result->{"fields"} = \@fields;
-
-    my $nattrs = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-    while ( $nattrs-->0 && $p<$max  ) {
-	my $len = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-	my $attr = substr ( $response, $p, $len ); $p += $len;
-	my $type = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-	$attrs{$attr} = $type;
-	push(@attr_list, $attr);
-    }
-    $result->{"attrs"} = \%attrs;
-
-    # read match count
-    my $count = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-    my $id64 = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-
-    # read matches
-    while ( $count-->0 && $p<$max ) {
-	my $data = {};
-	if ($id64) {
-	    ( $data->{dochi}, $data->{doclo}, $data->{weight} ) = unpack("N*N*N*", substr($response,$p,12));
-	    $data->{doc} = ($data->{dochi} << 32) + $data->{doclo};
-	    $p += 12;
-	}
-	else {
-	    ( $data->{doc}, $data->{weight} ) = unpack("N*N*", substr($response,$p,8));
-	    $p += 8;
-	}
-	foreach my $attr (@attr_list) {
-	    my $val = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-	    if ($attrs{$attr} & SPH_ATTR_MULTI) {
-		my $nvalues = $val;
-		$data->{$attr} = [];
-		while ($nvalues-->0 && $p < $max) {
-		    $val = unpack( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-		    push(@{$data->{$attr}}, $val);
-		}
+	# extract status
+	my $status = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
+	if ($status != SEARCHD_OK) {
+	    my $len = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
+	    my $message = substr ( $response, $p, $len ); $p += $len;
+	    if ($status == SEARCHD_WARNING) {
+		$result->{warning} = $message;
 	    }
 	    else {
-		$data->{$attr} = $val;
-	    }
+		$result->{error} = $message;
+		next;
+	    }	    
 	}
-	push(@{$result->{matches}}, $data);
-    }
-    my $words;
-    ($result->{total}, $result->{total_found}, $result->{time}, $words) = unpack("N*N*N*N*", substr($response, $p, 16));
-    $result->{time} = sprintf ( "%.3f", $result->{"time"}/1000 );
-    $p += 16;
 
-    while ( $words-->0 && $p < $max) {
-	my $len = unpack ( "N*", substr ( $response, $p, 4 ) ); 
-	$p += 4;
-	my $word = substr ( $response, $p, $len ); 
-	$p += $len;
-	my ($docs, $hits) = unpack ("N*N*", substr($response, $p, 8));
-	$p += 8;
-	$result->{words}{$word} = {
-	    "docs" => $docs,
-	    "hits" => $hits
-	    };
+	# read schema
+	my @fields;
+	my (%attrs, @attr_list);
+
+	my $nfields = unpack ( "N", substr ( $response, $p, 4 ) ); $p += 4;
+	while ( $nfields-->0 && $p<$max ) {
+	    my $len = unpack ( "N", substr ( $response, $p, 4 ) ); $p += 4;
+	    push(@fields, substr ( $response, $p, $len )); $p += $len;
+	}
+	$result->{"fields"} = \@fields;
+
+	my $nattrs = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+	while ( $nattrs-->0 && $p<$max  ) {
+	    my $len = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+	    my $attr = substr ( $response, $p, $len ); $p += $len;
+	    my $type = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+	    $attrs{$attr} = $type;
+	    push(@attr_list, $attr);
+	}
+	$result->{"attrs"} = \%attrs;
+
+	# read match count
+	my $count = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+	my $id64 = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+
+	# read matches
+	while ( $count-->0 && $p<$max ) {
+	    my $data = {};
+	    if ($id64) {
+		( $data->{dochi}, $data->{doclo}, $data->{weight} ) = unpack("N*N*N*", substr($response,$p,12));
+		$data->{doc} = ($data->{dochi} << 32) + $data->{doclo};
+		$p += 12;
+	    }
+	    else {
+		( $data->{doc}, $data->{weight} ) = unpack("N*N*", substr($response,$p,8));
+		$p += 8;
+	    }
+	    foreach my $attr (@attr_list) {
+		my $val = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+		if ($attrs{$attr} & SPH_ATTR_MULTI) {
+		    my $nvalues = $val;
+		    $data->{$attr} = [];
+		    while ($nvalues-->0 && $p < $max) {
+			$val = unpack( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+			push(@{$data->{$attr}}, $val);
+		    }
+		}
+		else {
+		    $data->{$attr} = $val;
+		}
+	    }
+	    push(@{$result->{matches}}, $data);
+	}
+	my $words;
+	($result->{total}, $result->{total_found}, $result->{time}, $words) = unpack("N*N*N*N*", substr($response, $p, 16));
+	$result->{time} = sprintf ( "%.3f", $result->{"time"}/1000 );
+	$p += 16;
+
+	while ( $words-->0 && $p < $max) {
+	    my $len = unpack ( "N*", substr ( $response, $p, 4 ) ); 
+	    $p += 4;
+	    my $word = substr ( $response, $p, $len ); 
+	    $p += $len;
+	    my ($docs, $hits) = unpack ("N*N*", substr($response, $p, 8));
+	    $p += 8;
+	    $result->{words}{$word} = {
+		"docs" => $docs,
+		"hits" => $hits
+		};
+	}
     }
-    return $result;
+
+    return \@results;
 }
 
 =head2 BuildExcerpts
