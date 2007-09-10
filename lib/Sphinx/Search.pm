@@ -12,15 +12,17 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 =head1 VERSION
 
-This version is 0.03.
+Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.03 for Sphinx 0.9.8-cvs-20070907 and later
+This version is 0.04.
+
+Use version 0.04 for Sphinx 0.9.8-cvs-20070907 and later
 
 Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 =head1 SYNOPSIS
 

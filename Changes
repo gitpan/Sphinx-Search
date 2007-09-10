@@ -1,9 +1,13 @@
 Revision history for Sphinx-Search
 
 0.01    2007-09-07
-        Initial release
+        Initial release for sphinx-0.9.8-cvs-20070818
 
 0.02	2007-09-08
 	Update to support UTF-8
 
+0.03	2007-09-09
+	Upgraded API with AddQuery/RunQueries for sphinx-0.9.8-cvs-20070907
 
+0.04    2007-09-10
+	Added support for tests to use non-standard mysql socket

@@ -16,7 +16,6 @@ use File::SearchPath qw/searchpath/;
 use Path::Class;
 use Sphinx::Search;
 use Socket;
-use encoding 'utf8';
 
 my $searchd = $ENV{SPHINX_SEARCHD} || searchpath('searchd');
 my $indexer = $ENV{SPHINX_INDEXER} || searchpath('indexer');
@@ -35,9 +34,10 @@ my $dbpass = $ENV{SPHINX_DBPASS} || "";
 my $dbname = ( $dsn =~ m!database=([^;]+)! ) ? $1 : "test";
 my $dbhost = ( $dsn =~ m!host=([^;]+)! ) ? $1 : "localhost";
 my $dbport = ( $dsn =~ m!port=([^;]+)! ) ? $1 : "";
+my $dbsock = ( $dsn =~ m!socket=([^;]+)! ) ? $1 : "";
 my $sph_port = $ENV{SPHINX_PORT} || int(rand(20000));
 
-my $dbi = DBI->connect($dsn, $dbuser, $dbpass, { RaiseError => 1 });
+my $dbi = DBI->connect($dsn, $dbuser, $dbpass, { RaiseError => 0 });
 unless ($dbi) {
     plan skip_all => "Failed to connect to database; set SPHINX_DSN, SPHINX_DBUSER, SPHINX_DBPASS appropriately to run these tests";
 }
@@ -265,6 +265,7 @@ sub write_config {
 	sql_pass = $dbpass
 	sql_db = $dbname
 	sql_port = $dbport
+	sql_sock = $dbsock
 	sql_query = SELECT * FROM $dbtable
 	sql_attr_uint = attr1
     }
