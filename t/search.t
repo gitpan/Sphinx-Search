@@ -67,7 +67,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 36;
+plan tests => 41;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -201,8 +201,39 @@ ok($results, "Results for 'bb'");
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 3, "Update attributes, grouping");
 
+# Attribute filters
+$sphinx->SetGroupBy("", SPH_GROUPBY_ATTR)
+    ->SetFilter("attr1", [ 10 ]);
+$results = $sphinx->Query("bb");
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 2, "Filter");
+
+# Attribute exclude
+$sphinx->ResetFilters->SetFilter("attr1", [ 10 ], 1);
+$results = $sphinx->Query("bb");
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 3, "Filter exclude");
+
+# Range filters
+$sphinx->ResetFilters->SetFilterRange("attr1", 2, 11);
+$results = $sphinx->Query("bb");
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 3, "Range filter");
+
+# Range filters exclude
+$sphinx->ResetFilters->SetFilterRange("attr1", 2, 11, 1);
+$results = $sphinx->Query("bb");
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 2, "Range filter exclude");
+
+# ID Range
+$sphinx->ResetFilters->SetIDRange(2, 4);
+$results = $sphinx->Query("bb");
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 3, "ID range");
+
 # UTF-8 test
-$sphinx->SetGroupBy("", SPH_GROUPBY_ATTR);
+$sphinx->SetIDRange(0, 0xFFFFFFFF);
 $results = $sphinx->Query("bb\x{2122}");
 ok($results, "UTF-8");
 ok($results->{total} == 5, "UTF-8 results count");

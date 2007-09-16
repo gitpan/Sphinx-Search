@@ -14,15 +14,15 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.04.
+This version is 0.05.
 
-Use version 0.04 for Sphinx 0.9.8-cvs-20070907 and later
+Use version 0.05 for Sphinx 0.9.8-cvs-20070907 and later
 
 Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.04';
+our $VERSION = '0.05';
 
 =head1 SYNOPSIS
 
@@ -136,9 +136,7 @@ sub new {
 	_sortby		=> "",
 	_min_id		=> 0,
 	_max_id		=> 0xFFFFFFFF,
-	_min		=> {},
-	_max		=> {},
-	_filter		=> {},
+	_filters	=> [],
 	_groupby	=> "",
 	_groupdistinct	=> "",
 	_groupfunc	=> SPH_GROUPBY_DAY,
@@ -542,6 +540,7 @@ sub SetIDRange {
 =head2 SetFilter
 
     $sph->SetFilter($attr, \@values);
+    $sph->SetFilter($attr, \@values, $exclude);
 
 Sets the results to be filtered on the given attribute.  Only results which have
 attributes matching the given values will be returned.
@@ -549,50 +548,77 @@ attributes matching the given values will be returned.
 This may be called multiple times with different attributes to select on
 multiple attributes.
 
+If 'exclude' is set, excludes results that match the filter.
+
 Returns $sph.
 
 =cut
 
 sub SetFilter {
-        my $self = shift;
-	my $attribute = shift;
-	my $values = shift;
-	croak("attribute is not defined") unless (defined $attribute);
-	croak("values is not an array reference") unless (ref($values) eq 'ARRAY');
-	croak("values reference is empty") unless (scalar(@$values));
+    my ($self, $attribute, $values, $exclude) = @_;
 
-	foreach my $value (@$values) {
-		croak("value $value is not an integer") unless ($value =~ /^\d+$/);
-	}
-	$self->{_filter}{$attribute} = $values;
-	return $self;
+    croak("attribute is not defined") unless (defined $attribute);
+    croak("values is not an array reference") unless (ref($values) eq 'ARRAY');
+    croak("values reference is empty") unless (scalar(@$values));
+
+    foreach my $value (@$values) {
+	croak("value $value is not an integer") unless ($value =~ /^\d+$/);
+    }
+    push(@{$self->{_filters}}, {
+	attr => $attribute,
+	values => $values,
+	exclude => $exclude ? 1 : 0,
+    });
+
+    return $self;
 }
 
 =head2 SetFilterRange
 
     $sph->SetFilterRange($attr, $min, $max);
+    $sph->SetFilterRange($attr, $min, $max, $exclude);
 
 Sets the results to be filtered on a range of values for the given
 attribute. Only those records where $attr column value is between $min and $max
 (including $min and $max) will be returned.
+
+If 'exclude' is set, excludes results that fall within the given range.
 
 Returns $sph.
 
 =cut
 
 sub SetFilterRange {
-	my $self = shift;
-	my $attribute = shift;
-	my $min = shift;
-	my $max = shift;
-	croak("attribute is not defined") unless (defined $attribute);
-	croak("min: $min is not an integer") unless ($min =~ /^\d+$/);
-	croak("max: $max is not an integer") unless ($max =~ /^\d+$/);
-	croak("min value should be <= max") unless ($min <= $max);
-	
-	$self->{_min}{$attribute} = $min;
-	$self->{_max}{$attribute} = $max;
-	return $self;
+    my ($self, $attribute, $min, $max, $exclude) = @_;
+    croak("attribute is not defined") unless (defined $attribute);
+    croak("min: $min is not an integer") unless ($min =~ /^\d+$/);
+    croak("max: $max is not an integer") unless ($max =~ /^\d+$/);
+    croak("min value should be <= max") unless ($min <= $max);
+
+    push(@{$self->{_filters}}, {
+	attr => $attribute,
+	min => $min,
+	max => $max,
+	exclude => $exclude ? 1 : 0,
+    });
+
+    return $self;
+}
+
+=head2 ResetFilters
+
+    $sph->ResetFilters;
+
+Clear all filters.
+
+=cut
+
+sub ResetFilters {
+    my $self = shift;
+
+    $self->{_filters} = [];
+
+    return $self;
 }
 
 =head2 SetGroupBy
@@ -831,19 +857,16 @@ sub AddQuery {
     $req .= pack ( "NNN", 0, int($self->{_min_id}), int($self->{_max_id}) ); # id32 range
 
     # filters
-    $req .= pack ( "N", scalar(keys %{$self->{_min}}) + scalar(keys %{$self->{_filter}}) );
-
-    foreach my $attr (keys %{$self->{_min}}) {
-	$req .= 
-	    pack ( "N/a*", $attr) .
-	    pack ( "NNNN", 3, 0, $self->{_min}{$attr}, $self->{_max}{$attr} );
-    }
-
-    foreach my $attr (keys %{$self->{_filter}}) {
-	my $values = $self->{_filter}{$attr};
-	$req .=
-	    pack ( "N/a*", $attr) .
-	    pack ( "N*", scalar(@$values), @$values );
+    $req .= pack ( "N", scalar @{$self->{_filters}} );
+    foreach my $filter (@{$self->{_filters}}) {
+	$req .= pack ( "N/a*", $filter->{attr});
+	if (my $values = $filter->{values}) {
+	    $req .= pack ( "N*", scalar(@$values), @$values);
+	}
+	else {
+	    $req .= pack ( "NNN", 0, $filter->{min}, $filter->{max} );
+	}	    
+	$req .= pack ( "N",  $filter->{exclude});
     }
 
     # group-by clause, max-matches count, group-sort clause, cutoff count

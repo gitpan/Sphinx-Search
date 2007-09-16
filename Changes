@@ -11,3 +11,7 @@ Revision history for Sphinx-Search
 
 0.04    2007-09-10
 	Added support for tests to use non-standard mysql socket
+
+0.05	2007-09-16
+	Fixed bug [rt.cpan.org #29383]
+	Added support for filter excludes
