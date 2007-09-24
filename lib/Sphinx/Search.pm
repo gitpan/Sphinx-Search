@@ -14,15 +14,17 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.05.
+This version is 0.06.
 
-Use version 0.05 for Sphinx 0.9.8-cvs-20070907 and later
+Use version 0.06 for Sphinx 0.9.8-svn-r820 and later
+
+Use version 0.05 for Sphinx 0.9.8-cvs-20070907
 
 Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 =head1 SYNOPSIS
 
@@ -56,7 +58,7 @@ use constant SEARCHD_COMMAND_EXCERPT	=> 1;
 use constant SEARCHD_COMMAND_UPDATE	=> 2;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x10D;
+use constant VER_COMMAND_SEARCH		=> 0x10E;
 use constant VER_COMMAND_EXCERPT	=> 0x100;
 use constant VER_COMMAND_UPDATE	        => 0x100;
 
@@ -80,9 +82,17 @@ use constant SPH_SORT_ATTR_ASC		=> 2;
 use constant SPH_SORT_TIME_SEGMENTS	=> 3;
 use constant SPH_SORT_EXTENDED	=> 4;
 
+# known filter types
+use constant SPH_FILTER_VALUES          => 0;
+use constant SPH_FILTER_RANGE           => 1;
+use constant SPH_FILTER_FLOATRANGE      => 2;
+
 # known attribute types
 use constant SPH_ATTR_INTEGER		=> 1;
 use constant SPH_ATTR_TIMESTAMP		=> 2;
+use constant SPH_ATTR_ORDINAL		=> 3;
+use constant SPH_ATTR_BOOL		=> 4;
+use constant SPH_ATTR_FLOAT		=> 5;
 use constant SPH_ATTR_MULTI		=> 0x40000000;
 
 # known grouping functions
@@ -145,6 +155,8 @@ sub new {
 	_cutoff         => 0,
 	_retrycount     => 0,
 	_retrydelay     => 0,
+	_anchor         => undef,
+
 	_error		=> '',
 	_warning	=> '',
 	_connection     => undef,
@@ -565,6 +577,7 @@ sub SetFilter {
 	croak("value $value is not an integer") unless ($value =~ /^\d+$/);
     }
     push(@{$self->{_filters}}, {
+	type => SPH_FILTER_VALUES,
 	attr => $attribute,
 	values => $values,
 	exclude => $exclude ? 1 : 0,
@@ -582,6 +595,8 @@ Sets the results to be filtered on a range of values for the given
 attribute. Only those records where $attr column value is between $min and $max
 (including $min and $max) will be returned.
 
+$min and $max must be integers.  Use L<SetFilterFloatRange> for floating point values.
+
 If 'exclude' is set, excludes results that fall within the given range.
 
 Returns $sph.
@@ -596,12 +611,82 @@ sub SetFilterRange {
     croak("min value should be <= max") unless ($min <= $max);
 
     push(@{$self->{_filters}}, {
+	type => SPH_FILTER_RANGE,
 	attr => $attribute,
 	min => $min,
 	max => $max,
 	exclude => $exclude ? 1 : 0,
     });
 
+    return $self;
+}
+
+=head2 SetFilterFloatRange 
+
+    $sph->SetFilterFloatRange($attr, $min, $max, $exclude);
+
+Same as L<SetFilterRange>, but allows floating point values.
+
+Returns $sph.
+
+=cut
+
+sub SetFilterFloatRange {
+    my ($self, $attribute, $min, $max, $exclude) = @_;
+    croak("attribute is not defined") unless (defined $attribute);
+    croak("min: $min is not numeric") unless ($min =~ /^\d*\.?\d*$/);
+    croak("max: $max is not numeric") unless ($max =~ /^\d*\.?\d*$/);
+    croak("min value should be <= max") unless ($min <= $max);
+
+    push(@{$self->{_filters}}, {
+	type => SPH_FILTER_FLOATRANGE,
+	attr => $attribute,
+	min => $min,
+	max => $max,
+	exclude => $exclude ? 1 : 0,
+    });
+
+    return $self;
+
+}
+
+=head2 SetGeoAnchor
+
+    $sph->SetGeoAnchor($attrlat, $attrlong, $lat, $long);
+
+Setup geographical anchor point for using @geodist in filters and sorting.
+Distance will be computed with respect to this point
+
+=over 4
+
+=item $attrlat is the name of latitude attribute
+
+=item $attrlong is the name of longitude attribute
+
+=item $lat is anchor point latitude, in radians
+
+=item $long is anchor point longitude, in radians
+
+=back
+
+Returns $sph.
+
+=cut
+
+sub SetGeoAnchor {
+    my ($self, $attrlat, $attrlong, $lat, $long) = @_;
+
+    croak("attrlat is not defined") unless defined $attrlat;
+    croak("attrlong is not defined") unless defined $attrlong;
+    croak("lat: $lat is not numeric") unless ($lat =~ /^\d*\.?\d*$/);
+    croak("long: $long is not numeric") unless ($long =~ /^\d*\.?\d*$/);
+
+    $self->{_anchor} = { 
+			 attrlat => $attrlat, 
+			 attrlong => $attrlong, 
+			 lat => $lat,
+			 long => $long,
+		     };
     return $self;
 }
 
@@ -617,6 +702,7 @@ sub ResetFilters {
     my $self = shift;
 
     $self->{_filters} = [];
+    $self->{_anchor} = undef;
 
     return $self;
 }
@@ -802,6 +888,8 @@ Hash which maps query terms (stemmed!) to ( "docs", "hits" ) hash
 
 =back
 
+Returns the results array on success, undef on error.
+
 =cut
 
 sub Query {
@@ -815,7 +903,8 @@ sub Query {
     my $results = $self->RunQueries or return undef;
     $self->_Error($results->[0]->{error}) if $results->[0]->{error};
     $self->_Warning($results->[0]->{warning}) if $results->[0]->{warning};
-    
+    return undef if $results->[0]->{status} && $results->[0]->{status} == SEARCHD_ERROR;
+
     return $results->[0];
 }
 
@@ -860,12 +949,21 @@ sub AddQuery {
     $req .= pack ( "N", scalar @{$self->{_filters}} );
     foreach my $filter (@{$self->{_filters}}) {
 	$req .= pack ( "N/a*", $filter->{attr});
-	if (my $values = $filter->{values}) {
-	    $req .= pack ( "N*", scalar(@$values), @$values);
+	$req .= pack ( "N", $filter->{type});
+
+	my $t = $filter->{type};
+	if ($t == SPH_FILTER_VALUES) {
+	    $req .= pack ( "N*", scalar(@{$filter->{values}}), @{$filter->{values}});
+	}
+	elsif ($t == SPH_FILTER_RANGE) {
+	    $req .= pack ( "NN", $filter->{min}, $filter->{max} );
+	}
+	elsif ($t == SPH_FILTER_FLOATRANGE) {
+	    $req .= pack ( "ff", $filter->{min}, $filter->{max} );
 	}
 	else {
-	    $req .= pack ( "NNN", 0, $filter->{min}, $filter->{max} );
-	}	    
+	    croak("Unhandled filter type $t");
+	}
 	$req .= pack ( "N",  $filter->{exclude});
     }
 
@@ -876,6 +974,16 @@ sub AddQuery {
     $req .= pack ( "NNN", $self->{_cutoff}, $self->{_retrycount}, $self->{_retrydelay} );
     $req .= pack ( "N/a*", $self->{_groupdistinct});
 
+    if (!defined $self->{_anchor}) {
+	$req .= pack ( "N", 0);
+    }
+    else {
+	my $a = $self->{_anchor};
+	$req .= pack ( "N", 1);
+	$req .= pack ( "N/a*", $a->{attrlat});
+	$req .= pack ( "N/a*", $a->{attrlong});
+	$req .= pack ( "ff", $a->{lat}, $a->{long});
+    }
     push(@{$self->{_reqs}}, $req);
 
     return scalar $#{$self->{_reqs}};
@@ -998,6 +1106,10 @@ sub RunQueries {
 		$p += 8;
 	    }
 	    foreach my $attr (@attr_list) {
+		if ($attrs{$attr} == SPH_ATTR_FLOAT) {
+		    $data->{$attr} = [ unpack("f*", substr ( $response, $p, 4 ) ) ]; $p += 4;
+		    next;
+		}
 		my $val = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
 		if ($attrs{$attr} & SPH_ATTR_MULTI) {
 		    my $nvalues = $val;

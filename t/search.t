@@ -16,6 +16,7 @@ use File::SearchPath qw/searchpath/;
 use Path::Class;
 use Sphinx::Search;
 use Socket;
+use Data::Dumper;
 
 my $searchd = $ENV{SPHINX_SEARCHD} || searchpath('searchd');
 my $indexer = $ENV{SPHINX_INDEXER} || searchpath('indexer');
@@ -67,7 +68,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 41;
+plan tests => 42;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -88,7 +89,7 @@ is_deeply($results->{'words'},
 	  },
 	  "words for 'a'");
 is_deeply($results->{'fields'}, [ qw/field1 field2/ ], "fields for 'a'");
-is_deeply($results->{'attrs'}, { attr1 => 1 }, "attributes for 'a'");
+is_deeply($results->{'attrs'}, { attr1 => 1, lat => 5, long => 5 }, "attributes for 'a'");
 my $weights = 1;
 $weights *= $_->{weight} for @{$results->{matches}};
 ok($weights == 1, "weights for 'a'");
@@ -226,16 +227,39 @@ $results = $sphinx->Query("bb");
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 2, "Range filter exclude");
 
+SKIP: {
+skip 2, "Bug in server side of SetFilterFloatRange";
+# Float range filters
+$sphinx->ResetFilters->SetFilterFloatRange("lat", 0.2, 0.4);
+$results = $sphinx->Query("a");
+print Dumper($results);
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 3, "Float range filter");
+
+# Float range filters exclude
+$sphinx->ResetFilters->SetFilterFloatRange("lat", 0.2, 0.4, 1);
+$results = $sphinx->Query("a");
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 2, "Float range filter exclude");
+}
+
 # ID Range
 $sphinx->ResetFilters->SetIDRange(2, 4);
 $results = $sphinx->Query("bb");
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 3, "ID range");
 
+# Geodistance
+$sphinx->SetGeoAnchor('lat', 'long', 0.4, 0.4)->SetMatchMode(SPH_MATCH_EXTENDED)->SetSortMode(SPH_SORT_EXTENDED, '@geodist desc')->SetFilterFloatRange('@geodist', 0,  1934127);
+$results = $sphinx->Query('a');
+print $sphinx->GetLastError unless $results;
+ok($results->{total} == 2, "SetGeoAnchor");
+
 # UTF-8 test
-$sphinx->SetIDRange(0, 0xFFFFFFFF);
+$sphinx->ResetFilters->SetSortMode(SPH_SORT_RELEVANCE)->SetIDRange(0, 0xFFFFFFFF);
 $results = $sphinx->Query("bb\x{2122}");
 ok($results, "UTF-8");
+print $sphinx->GetLastError unless $results;
 ok($results->{total} == 5, "UTF-8 results count");
 
 # Batch interface
@@ -266,13 +290,15 @@ sub create_db {
 					     \`field1\` TEXT,
 					     \`field2\` TEXT,
 				             \`attr1\` INT NOT NULL,
+				             \`lat\` FLOAT NOT NULL,
+				             \`long\` FLOAT NOT NULL,
 					     PRIMARY KEY (\`id\`))});
-    $dbi->do(qq{INSERT INTO \`$dbtable\` (\`field1\`,\`field2\`,\`attr1\`) VALUES
-		   ('a', 'bb', 2),
-		   ('a', 'bb ccc', 4),
-		   ('a', 'bb ccc dddd', 1),
-		   ('a bb', 'bb ccc dddd', 5),
-		   ('bb', 'bb bb ccc dddd', 3)});
+    $dbi->do(qq{INSERT INTO \`$dbtable\` (\`field1\`,\`field2\`,\`attr1\`,\`lat\`,\`long\`) VALUES
+		   ('a', 'bb', 2, 0.35, 0.70),
+		   ('a', 'bb ccc', 4, 0.70, 0.35),
+		   ('a', 'bb ccc dddd', 1, 0.35, 0.70),
+		   ('a bb', 'bb ccc dddd', 5, 0.35, 0.70),
+		   ('bb', 'bb bb ccc dddd', 3, 1.5, 1.5)});
     };
     if ($@) {
 	print STDERR "Failed to create/load database table: $@\n";
@@ -299,6 +325,8 @@ sub write_config {
 	sql_sock = $dbsock
 	sql_query = SELECT * FROM $dbtable
 	sql_attr_uint = attr1
+	sql_attr_float = lat
+	sql_attr_float = long
     }
     index test_jjs_index {
 	source = test_jjs_src
@@ -313,7 +341,9 @@ sub write_config {
 	pid_file = $pidfile
     }
 EOF
-    
+    $config =~ s/sql_sock.*// unless $dbsock;
+    $config =~ s/sql_port.*// unless $dbport;
+
     open(CONFIG, ">$configfile");
     print CONFIG $config;
     close(CONFIG);
@@ -329,7 +359,7 @@ sub run_indexer {
     my $configfile = shift;
 
     my $res = `$indexer --config $configfile test_jjs_index`;
-    if ($? != 0) {
+    if ($? != 0 || $res =~ m!ERROR!) {
 	print STDERR "Indexer returned $?: $res";
 	return 0;
     }

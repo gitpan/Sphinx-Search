@@ -15,3 +15,7 @@ Revision history for Sphinx-Search
 0.05	2007-09-16
 	Fixed bug [rt.cpan.org #29383]
 	Added support for filter excludes
+
+0.06	2007-09-24
+	Upgraded API with SetGeoAnchor and SetFilterFloatRange for
+	sphinx-0.9.8-svn-r820
