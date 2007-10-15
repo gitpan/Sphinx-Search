@@ -19,3 +19,6 @@ Revision history for Sphinx-Search
 0.06	2007-09-24
 	Upgraded API with SetGeoAnchor and SetFilterFloatRange for
 	sphinx-0.9.8-svn-r820
+
+0.07	2007-10-15
+	Upgraded API with SetIndexWeights for sphinx-0.9.8-svn-r871

@@ -14,9 +14,11 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.06.
+This version is 0.07.
 
-Use version 0.06 for Sphinx 0.9.8-svn-r820 and later
+Use version 0.07 for Sphinx 0.9.8-svn-r871 and later
+
+Use version 0.06 for Sphinx 0.9.8-svn-r820
 
 Use version 0.05 for Sphinx 0.9.8-cvs-20070907
 
@@ -24,7 +26,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 =head1 SYNOPSIS
 
@@ -58,7 +60,7 @@ use constant SEARCHD_COMMAND_EXCERPT	=> 1;
 use constant SEARCHD_COMMAND_UPDATE	=> 2;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x10E;
+use constant VER_COMMAND_SEARCH		=> 0x10F;
 use constant VER_COMMAND_EXCERPT	=> 0x100;
 use constant VER_COMMAND_UPDATE	        => 0x100;
 
@@ -136,8 +138,11 @@ will be generated.
 sub new {
     my ($class, $options) = @_;
     my $self = {
+	# per=client-object settings
 	_host		=> 'localhost',
 	_port		=> 3312,
+
+	# per-query settings
 	_offset		=> 0,
 	_limit		=> 20,
 	_mode		=> SPH_MATCH_ALL,
@@ -156,12 +161,17 @@ sub new {
 	_retrycount     => 0,
 	_retrydelay     => 0,
 	_anchor         => undef,
+	_indexweights   => undef,
 
+	# per-reply fields (for single-query case)
 	_error		=> '',
 	_warning	=> '',
+	
+	# request storage (for multi-query case)
+	_reqs           => [],
+
 	_connection     => undef,
 	_persistent_connection => 0,
-	_reqs           => [],
     };
     bless($self, $class);
 
@@ -526,6 +536,29 @@ sub SetWeights {
 	return $self;
 }
 
+=head2 SetIndexWeights
+    
+    $sph->SetIndexWeights(\%weights);
+
+Set per-index (integer) weights.  The weights hash is a mapping of index name to integer weight.
+
+Returns $sph.
+
+=cut
+
+sub SetIndexWeights {
+        my $self = shift;
+        my $weights = shift;
+        croak("Weights is not a hash reference") unless (ref($weights) eq 'HASH');
+        foreach (keys %$weights) {
+                croak("IndexWeight $_: $weights->{$_} is not an integer") unless ($weights->{$_} =~ /^\d+$/);
+        }
+        $self->{_indexweights} = $weights;
+	return $self;
+}
+
+
+
 =head2 SetIDRange
 
     $sph->SetIDRange($min, $max);
@@ -690,23 +723,6 @@ sub SetGeoAnchor {
     return $self;
 }
 
-=head2 ResetFilters
-
-    $sph->ResetFilters;
-
-Clear all filters.
-
-=cut
-
-sub ResetFilters {
-    my $self = shift;
-
-    $self->{_filters} = [];
-    $self->{_anchor} = undef;
-
-    return $self;
-}
-
 =head2 SetGroupBy
 
     $sph->SetGroupBy($attr, $func);
@@ -720,7 +736,7 @@ match (in this group) according to current sorting function. The final result
 set contains one best match per group, with grouping function value and matches
 count attached.
 
-$attr is any valid attribute.  To disable grouping, set $attr to "".
+$attr is any valid attribute.  Use L<ResetGroupBy> to disable grouping.
 
 $func is one of:
 
@@ -842,6 +858,42 @@ sub SetRetries {
     croak("delay: $delay is not an integer >= 0") unless ($delay =~ /^\d+$/o && $delay >= 0);
     $self->{_retrycount} = $count;
     $self->{_retrydelay} = $delay;
+    return $self;
+}
+
+=head2 ResetFilters
+
+    $sph->ResetFilters;
+
+Clear all filters.
+
+=cut
+
+sub ResetFilters {
+    my $self = shift;
+
+    $self->{_filters} = [];
+    $self->{_anchor} = undef;
+
+    return $self;
+}
+
+=head2 ResetGroupBy
+
+    $sph->ResetGroupBy;
+
+Clear all group-by settings.
+
+=cut
+
+sub ResetGroupBy {
+    my $self = shift;
+
+    $self->{_groupby} = "";
+    $self->{_groupfunc} = SPH_GROUPBY_DAY;
+    $self->{_groupsort} = '@group desc';
+    $self->{_groupdistinct} = "";
+
     return $self;
 }
 
@@ -984,6 +1036,11 @@ sub AddQuery {
 	$req .= pack ( "N/a*", $a->{attrlong});
 	$req .= pack ( "ff", $a->{lat}, $a->{long});
     }
+
+    # per-index weights
+    $req .= pack( "N", scalar keys %{$self->{_indexweights}});
+    $req .= pack ( "N/a*N", $_, $self->{_indexweights}->{$_} ) for keys %{$self->{_indexweights}};
+
     push(@{$self->{_reqs}}, $req);
 
     return scalar $#{$self->{_reqs}};
@@ -1352,6 +1409,28 @@ sub UpdateAttributes  {
 
 L<http://www.sphinxsearch.com>
 
+=head1 NOTES
+
+There is a bundled Sphinx.pm in the contrib area of the Sphinx source
+distribution, which was used as the starting point of Sphinx::Search.
+Maintenance of that version appears to have lapsed at sphinx-0.9.7, so many of
+the newer API calls are not available there.  Sphinx::Search is mostly
+compatible with the old Sphinx.pm except:
+
+=over 4
+
+=item On failure, Sphinx::Search returns undef rather than 0 or -1.
+
+=item Sphinx::Search 'Set' functions are cascadable, e.g. you can do
+      Sphinx::Search->new
+        ->SetMatchMode(SPH_MATCH_ALL)
+        ->SetSortMode(SPH_SORT_RELEVANCE)
+        ->Query("search terms")
+
+=back
+
+Sphinx::Search also provides documentation and unit tests, which were the main
+motivations for branching from the earlier work.
 
 =head1 AUTHOR
 

@@ -68,7 +68,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 42;
+plan tests => 46;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -166,6 +166,7 @@ ok(@{$results->{matches}} == 2, "matches for 'bb ccc' EXTENDED");
 ok($results->{matches}->[0]->{doc} =~ m/^(?:4|5)$/ &&
    $results->{matches}->[1]->{doc} =~ m/^(?:4|5)$/, "matched docs for 'bb ccc' EXTENDED");
 
+# SetWeights
 $sphinx->SetMatchMode(SPH_MATCH_ANY)
     ->SetSortMode(SPH_SORT_RELEVANCE)
     ->SetWeights([10, 2]);
@@ -177,6 +178,20 @@ for (1 .. @{$results->{matches}} - 1) {
     $order_ok = 0, last unless $results->{matches}->[$_ - 1]->{weight} >= $results->{matches}->[$_]->{weight} && $results->{matches}->[$_]->{weight} > 1;
 }
 ok($order_ok, 'Weighted relevance');
+
+# SetIndexWeights
+$sphinx->SetMatchMode(SPH_MATCH_ANY)
+    ->SetSortMode(SPH_SORT_RELEVANCE)
+    ->SetIndexWeights({ test_jjs_index => 2});
+$results = $sphinx->Query("bb ccc");
+ok($results, "Results for 'bb ccc'");
+print $sphinx->GetLastError unless $results;
+$order_ok = 1;
+for (1 .. @{$results->{matches}} - 1) {
+    $order_ok = 0, last unless $results->{matches}->[$_ - 1]->{weight} >= $results->{matches}->[$_]->{weight} && $results->{matches}->[$_]->{weight} > 1;
+}
+ok($order_ok, 'Weighted index');
+
 
 # Excerpts
 $results = $sphinx->BuildExcerpts([ "bb bb ccc dddd", "bb ccc dddd" ],
@@ -203,7 +218,7 @@ print $sphinx->GetLastError unless $results;
 ok($results->{total} == 3, "Update attributes, grouping");
 
 # Attribute filters
-$sphinx->SetGroupBy("", SPH_GROUPBY_ATTR)
+$sphinx->ResetGroupBy
     ->SetFilter("attr1", [ 10 ]);
 $results = $sphinx->Query("bb");
 print $sphinx->GetLastError unless $results;
@@ -227,12 +242,9 @@ $results = $sphinx->Query("bb");
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 2, "Range filter exclude");
 
-SKIP: {
-skip 2, "Bug in server side of SetFilterFloatRange";
 # Float range filters
 $sphinx->ResetFilters->SetFilterFloatRange("lat", 0.2, 0.4);
 $results = $sphinx->Query("a");
-print Dumper($results);
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 3, "Float range filter");
 
@@ -240,8 +252,7 @@ ok($results->{total} == 3, "Float range filter");
 $sphinx->ResetFilters->SetFilterFloatRange("lat", 0.2, 0.4, 1);
 $results = $sphinx->Query("a");
 print $sphinx->GetLastError unless $results;
-ok($results->{total} == 2, "Float range filter exclude");
-}
+ok($results->{total} == 1, "Float range filter exclude");
 
 # ID Range
 $sphinx->ResetFilters->SetIDRange(2, 4);
