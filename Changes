@@ -22,3 +22,7 @@ Revision history for Sphinx-Search
 
 0.07	2007-10-15
 	Upgraded API with SetIndexWeights for sphinx-0.9.8-svn-r871
+
+0.08	2007-11-24
+	Fixed handling of error conditions on recv and connect (Igor Gerdler,
+	rt.cpan.org #30934, #30935)

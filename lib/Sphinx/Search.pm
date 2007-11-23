@@ -14,9 +14,9 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.07.
+This version is 0.08.
 
-Use version 0.07 for Sphinx 0.9.8-svn-r871 and later
+Use version 0.08 for Sphinx 0.9.8-svn-r871 and later
 
 Use version 0.06 for Sphinx 0.9.8-svn-r820
 
@@ -26,7 +26,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 =head1 SYNOPSIS
 
@@ -48,6 +48,7 @@ search engine, L<http://www.sphinxsearch.com>.
 # Constants to export.
 our @EXPORT = qw(	
 		SPH_MATCH_ALL SPH_MATCH_ANY SPH_MATCH_PHRASE SPH_MATCH_BOOLEAN SPH_MATCH_EXTENDED
+		SPH_MATCH_FULLSCAN SPH_MATCH_EXTENDED2
 		SPH_SORT_RELEVANCE SPH_SORT_ATTR_DESC SPH_SORT_ATTR_ASC SPH_SORT_TIME_SEGMENTS
 		SPH_SORT_EXTENDED
 		SPH_GROUPBY_DAY SPH_GROUPBY_WEEK SPH_GROUPBY_MONTH SPH_GROUPBY_YEAR SPH_GROUPBY_ATTR
@@ -76,13 +77,15 @@ use constant SPH_MATCH_ANY		=> 1;
 use constant SPH_MATCH_PHRASE		=> 2;
 use constant SPH_MATCH_BOOLEAN		=> 3;
 use constant SPH_MATCH_EXTENDED		=> 4;
+use constant SPH_MATCH_FULLSCAN	        => 5;
+use constant SPH_MATCH_EXTENDED2	=> 6; # extended engine V2 (TEMPORARY, WILL BE REMOVED IN 0.9.8-RELEASE
 
 # known sort modes
 use constant SPH_SORT_RELEVANCE		=> 0;
 use constant SPH_SORT_ATTR_DESC		=> 1;
 use constant SPH_SORT_ATTR_ASC		=> 2;
 use constant SPH_SORT_TIME_SEGMENTS	=> 3;
-use constant SPH_SORT_EXTENDED	=> 4;
+use constant SPH_SORT_EXTENDED	        => 4;
 
 # known filter types
 use constant SPH_FILTER_VALUES          => 0;
@@ -294,16 +297,14 @@ sub _Connect {
 	socket($fp, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || Carp::croak("socket: ".$!);
 	binmode($fp, ':bytes');
 	my $dest = sockaddr_in($self->{_port}, inet_aton($self->{_host}));
-	connect($fp, $dest);
-	
-	if($!) {
-		$self->_Error("connection to {$self->{_host}}:{$self->{_port}} failed: $!");
-		return 0;
-	}	
+	connect($fp, $dest) or do {
+	    $self->_Error("connection to {$self->{_host}}:{$self->{_port}} failed: $!");
+	    return 0;
+	};
 	
 	# check version
 	my $buf = '';
-	recv($fp, $buf, 4, 0) eq "" || croak("recv: ".$!);
+	croak("recv: ".$!) unless defined recv($fp, $buf, 4, 0);
 	my $v = unpack("N*", $buf);
 	$v = int($v);
 	if($v < 1) {
@@ -332,7 +333,7 @@ sub _GetResponse {
 	my $client_ver = shift;
 
 	my $header;
-	recv($fp, $header, 8, 0) eq "" || croak("recv: ".$!);
+	croak("recv: ".$!) unless defined recv($fp, $header, 8, 0);
 
 	my ($status, $ver, $len ) = unpack("n2N", $header);
         my ($chunk, $response);
@@ -462,7 +463,12 @@ sub SetMatchMode {
         my $self = shift;
         my $mode = shift;
         croak("Match mode not defined") unless defined($mode);
-        croak("Unknown matchmode: $mode") unless ( $mode==SPH_MATCH_ALL || $mode==SPH_MATCH_ANY || $mode==SPH_MATCH_PHRASE || $mode==SPH_MATCH_BOOLEAN || $mode==SPH_MATCH_EXTENDED );
+        croak("Unknown matchmode: $mode") unless ( $mode==SPH_MATCH_ALL 
+						   || $mode==SPH_MATCH_ANY 
+						   || $mode==SPH_MATCH_PHRASE 
+						   || $mode==SPH_MATCH_BOOLEAN 
+						   || $mode==SPH_MATCH_EXTENDED 
+						   || $mode==SPH_MATCH_EXTENDED2 );
         $self->{_mode} = $mode;
 	return $self;
 }
