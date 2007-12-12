@@ -14,9 +14,11 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.08.
+This version is 0.09.
 
-Use version 0.08 for Sphinx 0.9.8-svn-r871 and later
+Use version 0.08 for Sphinx 0.9.8-svn-r985 and later
+
+Use version 0.08 for Sphinx 0.9.8-svn-r871
 
 Use version 0.06 for Sphinx 0.9.8-svn-r820
 
@@ -26,7 +28,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 =head1 SYNOPSIS
 
@@ -108,6 +110,8 @@ use constant SPH_GROUPBY_YEAR		=> 3;
 use constant SPH_GROUPBY_ATTR		=> 4;
 use constant SPH_GROUPBY_ATTRPAIR	=> 5;
 
+# Floating point number matching expression
+my $num_re = qr/^-?\d*\.?\d*(?:[eE][+-]?\d+)?$/;
 
 =head1 CONSTRUCTOR
 
@@ -594,7 +598,7 @@ sub SetIDRange {
     $sph->SetFilter($attr, \@values, $exclude);
 
 Sets the results to be filtered on the given attribute.  Only results which have
-attributes matching the given values will be returned.
+attributes matching the given (numeric) values will be returned.
 
 This may be called multiple times with different attributes to select on
 multiple attributes.
@@ -613,7 +617,7 @@ sub SetFilter {
     croak("values reference is empty") unless (scalar(@$values));
 
     foreach my $value (@$values) {
-	croak("value $value is not an integer") unless ($value =~ /^\d+$/);
+	croak("value $value is not numeric") unless ($value =~ m/$num_re/);
     }
     push(@{$self->{_filters}}, {
 	type => SPH_FILTER_VALUES,
@@ -645,8 +649,8 @@ Returns $sph.
 sub SetFilterRange {
     my ($self, $attribute, $min, $max, $exclude) = @_;
     croak("attribute is not defined") unless (defined $attribute);
-    croak("min: $min is not an integer") unless ($min =~ /^\d+$/);
-    croak("max: $max is not an integer") unless ($max =~ /^\d+$/);
+    croak("min: $min is not an integer") unless ($min =~ /^-?\d+$/);
+    croak("max: $max is not an integer") unless ($max =~ /^-?\d+$/);
     croak("min value should be <= max") unless ($min <= $max);
 
     push(@{$self->{_filters}}, {
@@ -673,8 +677,8 @@ Returns $sph.
 sub SetFilterFloatRange {
     my ($self, $attribute, $min, $max, $exclude) = @_;
     croak("attribute is not defined") unless (defined $attribute);
-    croak("min: $min is not numeric") unless ($min =~ /^\d*\.?\d*$/);
-    croak("max: $max is not numeric") unless ($max =~ /^\d*\.?\d*$/);
+    croak("min: $min is not numeric") unless ($min =~ m/$num_re/);
+    croak("max: $max is not numeric") unless ($max =~ m/$num_re/);
     croak("min value should be <= max") unless ($min <= $max);
 
     push(@{$self->{_filters}}, {
@@ -717,8 +721,8 @@ sub SetGeoAnchor {
 
     croak("attrlat is not defined") unless defined $attrlat;
     croak("attrlong is not defined") unless defined $attrlong;
-    croak("lat: $lat is not numeric") unless ($lat =~ /^\d*\.?\d*$/);
-    croak("long: $long is not numeric") unless ($long =~ /^\d*\.?\d*$/);
+    croak("lat: $lat is not numeric") unless ($lat =~ m/$num_re/);
+    croak("long: $long is not numeric") unless ($long =~ m/$num_re$/);
 
     $self->{_anchor} = { 
 			 attrlat => $attrlat, 
@@ -966,6 +970,15 @@ sub Query {
     return $results->[0];
 }
 
+# helper to pack floats in network byte order
+sub _PackFloat {
+    my $f = shift;
+    my $t1 = pack ( "f", $f ); # machine order
+    my $t2 = unpack ( "L*", $t1 ); # int in machine order
+    return pack ( "N", $t2 );
+}
+
+
 =head2 AddQuery
 
    $sph->AddQuery($query, $index);
@@ -1017,7 +1030,7 @@ sub AddQuery {
 	    $req .= pack ( "NN", $filter->{min}, $filter->{max} );
 	}
 	elsif ($t == SPH_FILTER_FLOATRANGE) {
-	    $req .= pack ( "ff", $filter->{min}, $filter->{max} );
+	    $req .= _PackFloat ( $filter->{"min"} ) . _PackFloat ( $filter->{"max"} );
 	}
 	else {
 	    croak("Unhandled filter type $t");
@@ -1040,7 +1053,7 @@ sub AddQuery {
 	$req .= pack ( "N", 1);
 	$req .= pack ( "N/a*", $a->{attrlat});
 	$req .= pack ( "N/a*", $a->{attrlong});
-	$req .= pack ( "ff", $a->{lat}, $a->{long});
+	$req .= _PackFloat($a->{lat}) . _PackFloat($a->{long});
     }
 
     # per-index weights
@@ -1170,7 +1183,8 @@ sub RunQueries {
 	    }
 	    foreach my $attr (@attr_list) {
 		if ($attrs{$attr} == SPH_ATTR_FLOAT) {
-		    $data->{$attr} = [ unpack("f*", substr ( $response, $p, 4 ) ) ]; $p += 4;
+		    my $uval = unpack( "N*", substr ( $response, $p, 4 ) ); $p += 4;
+		    $data->{$attr} = [ unpack("f*", pack("L", $uval)) ];
 		    next;
 		}
 		my $val = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
@@ -1247,6 +1261,14 @@ A hash which contains additional optional highlighting parameters:
 
 =item around - how many words to highlight around each match, default is 5
 
+=item exact_phrase - whether to highlight exact phrase matches only, default is false
+
+=item single_passage - whether to extract single best passage only, default is false
+
+=item use_boundaries
+
+=item weight_order 
+
 =back
 
 =back
@@ -1275,6 +1297,10 @@ sub BuildExcerpts {
 	$opts->{"chunk_separator"} ||= " ... ";
 	$opts->{"limit"} ||= 256;
 	$opts->{"around"} ||= 5;
+	$opts->{"exact_phrase"} ||= 0;
+	$opts->{"single_passage"} ||= 0;
+	$opts->{"use_boundaries"} ||= 0;
+	$opts->{"weight_order"} ||= 0;
 
 	##################
 	# build request
@@ -1282,7 +1308,13 @@ sub BuildExcerpts {
 
 	# v.1.0 req
 	my $req;
-	$req = pack ( "NN", 0, 1 ); # mode=0, flags=1 (remove spaces)
+	my $flags = 1; # remove spaces
+	$flags |= 2 if ( $opts->{"exact_phrase"} );
+	$flags |= 4 if ( $opts->{"single_passage"} );
+	$flags |= 8 if ( $opts->{"use_boundaries"} );
+	$flags |= 16 if ( $opts->{"weight_order"} );
+	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
+
 	$req .= pack ( "N", length($index) ) . $index; # req index
 	$req .= pack ( "N", length($words) ) . $words; # req words
 
@@ -1406,8 +1438,7 @@ sub UpdateAttributes  {
     return undef unless $response;
 
     ## parse response
-    my $p = 0;
-    my ($updated) = unpack ( "N*", substr ( $response, $p, 4 ) );
+    my ($updated) = unpack ( "N*", substr ( $response, 0, 4 ) );
     return $updated;
 }
 
