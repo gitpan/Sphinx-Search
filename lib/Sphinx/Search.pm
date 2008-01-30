@@ -4,6 +4,8 @@ use warnings;
 use strict;
 use Carp;
 use Socket;
+use Config;
+use Math::BigInt;
 use base 'Exporter';
 
 =head1 NAME
@@ -14,9 +16,11 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.09.
+This version is 0.10
 
-Use version 0.08 for Sphinx 0.9.8-svn-r985 and later
+Use version 0.10 for Sphinx 0.9.8-svn-r1112 and later
+
+Use version 0.09 for Sphinx 0.9.8-svn-r985
 
 Use version 0.08 for Sphinx 0.9.8-svn-r871
 
@@ -28,7 +32,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 =head1 SYNOPSIS
 
@@ -51,8 +55,9 @@ search engine, L<http://www.sphinxsearch.com>.
 our @EXPORT = qw(	
 		SPH_MATCH_ALL SPH_MATCH_ANY SPH_MATCH_PHRASE SPH_MATCH_BOOLEAN SPH_MATCH_EXTENDED
 		SPH_MATCH_FULLSCAN SPH_MATCH_EXTENDED2
+		SPH_RANK_PROXIMITY_BM25 SPH_RANK_BM25 SPH_RANK_NONE SPH_RANK_WORDCOUNT
 		SPH_SORT_RELEVANCE SPH_SORT_ATTR_DESC SPH_SORT_ATTR_ASC SPH_SORT_TIME_SEGMENTS
-		SPH_SORT_EXTENDED
+		SPH_SORT_EXTENDED SPH_SORT_EXPR
 		SPH_GROUPBY_DAY SPH_GROUPBY_WEEK SPH_GROUPBY_MONTH SPH_GROUPBY_YEAR SPH_GROUPBY_ATTR
 		SPH_GROUPBY_ATTRPAIR
 		);
@@ -63,9 +68,9 @@ use constant SEARCHD_COMMAND_EXCERPT	=> 1;
 use constant SEARCHD_COMMAND_UPDATE	=> 2;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x10F;
+use constant VER_COMMAND_SEARCH		=> 0x112;
 use constant VER_COMMAND_EXCERPT	=> 0x100;
-use constant VER_COMMAND_UPDATE	        => 0x100;
+use constant VER_COMMAND_UPDATE	        => 0x101;
 
 # known searchd status codes
 use constant SEARCHD_OK			=> 0;
@@ -80,7 +85,13 @@ use constant SPH_MATCH_PHRASE		=> 2;
 use constant SPH_MATCH_BOOLEAN		=> 3;
 use constant SPH_MATCH_EXTENDED		=> 4;
 use constant SPH_MATCH_FULLSCAN	        => 5;
-use constant SPH_MATCH_EXTENDED2	=> 6; # extended engine V2 (TEMPORARY, WILL BE REMOVED IN 0.9.8-RELEASE
+use constant SPH_MATCH_EXTENDED2	=> 6; # extended engine V2 (TEMPORARY, WILL BE REMOVED
+
+# known ranking modes (ext2 only)
+use constant SPH_RANK_PROXIMITY_BM25    => 0; # default mode, phrase proximity major factor and BM25 minor one
+use constant SPH_RANK_BM25              => 1; # statistical mode, BM25 ranking only (faster but worse quality)
+use constant SPH_RANK_NONE              => 2; # no ranking, all matches get a weight of 1
+use constant SPH_RANK_WORDCOUNT         => 3; # simple word-count weighting, rank is a weighted sum of per-field keyword occurence counts
 
 # known sort modes
 use constant SPH_SORT_RELEVANCE		=> 0;
@@ -88,6 +99,7 @@ use constant SPH_SORT_ATTR_DESC		=> 1;
 use constant SPH_SORT_ATTR_ASC		=> 2;
 use constant SPH_SORT_TIME_SEGMENTS	=> 3;
 use constant SPH_SORT_EXTENDED	        => 4;
+use constant SPH_SORT_EXPR	        => 5;
 
 # known filter types
 use constant SPH_FILTER_VALUES          => 0;
@@ -169,6 +181,9 @@ sub new {
 	_retrydelay     => 0,
 	_anchor         => undef,
 	_indexweights   => undef,
+	_ranker         => SPH_RANK_PROXIMITY_BM25,
+	_maxquerytime   => 0,
+	_fieldweights   => {},
 
 	# per-reply fields (for single-query case)
 	_error		=> '',
@@ -179,8 +194,9 @@ sub new {
 
 	_connection     => undef,
 	_persistent_connection => 0,
+	_longsize      => $Config{longsize},
     };
-    bless($self, $class);
+    bless $self, ref($class) || $class;
 
     # These options are supported in the constructor, but not recommended 
     # since there is no validation.  Use the Set* methods instead.
@@ -381,11 +397,51 @@ sub _GetResponse {
         return $response;
 }
 
+# portably pack numeric to 64 unsigned bits, network order
+sub _sphPack64 {
+    my $self = shift;
+    my $v = shift;
+
+    # x64 route
+    if ( $self->{_longsize} >= 8 ) {
+	my $i = int($v);
+	return pack ( "NN", $i>>32, $i & 4294967295 );
+    }
+
+    # x32 route, BigInt
+    my $x = "4294967296";
+    my $vb = Math::BigInt->new($v);
+    my $l = $vb->copy->band ( 4294967295 );
+    my $h = $vb->copy->brsft ( 32 );
+    return pack ( "NN", $h, $l );
+}
+
+
+# portably unpack 64 unsigned bits, network order to numeric
+sub _sphUnpack64 
+{
+    my $self = shift;
+    my $v = shift;
+
+    my ($h,$l) = unpack ( "N*N*", $v );
+
+    # x64 route
+    return ($h<<32) + $l if ( $self->{_longsize} >= 8 );
+
+    # x32 route, BigInt
+    $h = Math::BigInt->new($h);
+    $h->blsft(32)->badd($l);
+    
+    return $h->bstr;
+}
+
+
+
 =head2 SetServer
 
     $sph->SetServer($host, $port);
 
-Set the host/port details for the searchd server.  Returns $sph.
+Set the host (string) and port (integer) details for the searchd server.  Returns $sph.
 
 =cut
 
@@ -395,7 +451,7 @@ sub SetServer {
     my $port = shift;
 
     croak("host is not defined") unless defined($host);
-    croak("port is not defined") unless defined($port);
+    croak("port is not an integer") unless defined($port) && $port =~ m/^\d+$/o;
 
     $self->{_host} = $host;
     $self->{_port} = $port;
@@ -414,19 +470,41 @@ Returns $sph.
 =cut
 
 sub SetLimits {
-        my $self = shift;
-        my $offset = shift;
-        my $limit = shift;
-	my $max = shift || 0;
-        croak("offset should be an integer >= 0") unless ($offset =~ /^\d+$/ && $offset >= 0) ;
-        croak("limit should be an integer >= 0") unless ($limit =~ /^\d+$/ && $limit >= 0);
-        $self->{_offset} = $offset;
-        $self->{_limit}  = $limit;
-	if($max > 0) {
-		$self->{_maxmatches} = $max;
-	}
-	return $self;
+    my $self = shift;
+    my $offset = shift;
+    my $limit = shift;
+    my $max = shift || 0;
+    croak("offset should be an integer >= 0") unless ($offset =~ /^\d+$/ && $offset >= 0) ;
+    croak("limit should be an integer >= 0") unless ($limit =~ /^\d+$/ && $limit >= 0);
+    $self->{_offset} = $offset;
+    $self->{_limit}  = $limit;
+    if($max > 0) {
+	$self->{_maxmatches} = $max;
+    }
+    return $self;
 }
+
+=head2 SetMaxQueryTime
+
+    $sph->SetMaxQueryTime($millisec);
+
+Set maximum query time, in milliseconds, per index.
+
+The value may not be negative; 0 means "do not limit".
+
+Returns $sph.
+
+=cut
+
+sub SetMaxQueryTime {
+    my $self = shift;
+    my $max = shift;
+
+    croak("max value should be an integer >= 0") unless ($max =~ /^\d+$/ && $max >= 0) ;
+    $self->{_maxquerytime} = $max;
+    return $self;
+}
+
 
 =head2 SetMatchMode
 
@@ -436,23 +514,23 @@ Set match mode, which may be one of:
 
 =over 4
 
-=item SPH_MATCH_ALL
+=item * SPH_MATCH_ALL
 
 Match all words
 
-=item SPH_MATCH_ANY		
+=item * SPH_MATCH_ANY		
 
 Match any words
 
-=item SPH_MATCH_PHRASE	
+=item * SPH_MATCH_PHRASE	
 
 Exact phrase match
 
-=item SPH_MATCH_BOOLEAN	
+=item * SPH_MATCH_BOOLEAN	
 
 Boolean match, using AND (&), OR (|), NOT (!,-) and parenthetic grouping.
 
-=item SPH_MATCH_EXTENDED	
+=item * SPH_MATCH_EXTENDED	
 
 Extended match, which includes the Boolean syntax plus field, phrase and
 proximity operators.
@@ -476,6 +554,52 @@ sub SetMatchMode {
         $self->{_mode} = $mode;
 	return $self;
 }
+
+
+=head2 SetRankingMode
+
+    $sph->SetRankingMode(SPH_RANK_BM25);
+
+Set ranking mode, which may be one of:
+
+=over 4
+
+=item * SPH_RANK_PROXIMITY_BM25 
+
+Default mode, phrase proximity major factor and BM25 minor one
+
+=item * SPH_RANK_BM25 
+
+Statistical mode, BM25 ranking only (faster but worse quality)
+
+=item * SPH_RANK_NONE 
+
+No ranking, all matches get a weight of 1
+
+=item * SPH_RANK_WORDCOUNT 
+
+Simple word-count weighting, rank is a weighted sum of per-field keyword
+occurence counts
+
+=back
+
+Returns $sph.
+
+=cut
+
+sub SetRankingMode {
+    my $self = shift;
+    my $ranker = shift;
+
+    croak("Unknown ranking mode: $ranker") unless ( $ranker==SPH_RANK_PROXIMITY_BM25
+						    || $ranker==SPH_RANK_BM25
+						    || $ranker==SPH_RANK_NONE
+						    || $ranker==SPH_RANK_WORDCOUNT );
+
+    $self->{_ranker} = $ranker;
+    return $self;
+}
+   
 
 =head2 SetSortMode
 
@@ -501,6 +625,9 @@ by relevance in descending order.  $sortby specifies the time attribute.
 
 Sort by SQL-like syntax.  $sortby is the sorting specification.
 
+=item SPH_SORT_EXPR
+
+
 =back
 
 Returns $sph.
@@ -512,11 +639,12 @@ sub SetSortMode {
         my $mode = shift;
 	my $sortby = shift || "";
         croak("Sort mode not defined") unless defined($mode);
-        croak("Unknown sort mode: $mode") unless ( $mode==SPH_SORT_RELEVANCE || 
-						   $mode==SPH_SORT_ATTR_DESC ||
-						   $mode==SPH_SORT_ATTR_ASC || 
-						   $mode==SPH_SORT_TIME_SEGMENTS ||
-						   $mode==SPH_SORT_EXTENDED
+        croak("Unknown sort mode: $mode") unless ( $mode == SPH_SORT_RELEVANCE
+						   || $mode == SPH_SORT_ATTR_DESC
+						   || $mode == SPH_SORT_ATTR_ASC 
+						   || $mode == SPH_SORT_TIME_SEGMENTS
+						   || $mode == SPH_SORT_EXTENDED
+						   || $mode == SPH_SORT_EXPR
 						   );
 	croak("Sortby must be defined") unless ($mode==SPH_SORT_RELEVANCE || length($sortby));
         $self->{_sort} = $mode;
@@ -527,6 +655,8 @@ sub SetSortMode {
 =head2 SetWeights
     
     $sph->SetWeights([ 1, 2, 3, 4]);
+
+This method is deprecated.  Use L<SetFieldWeights> instead.
 
 Set per-field (integer) weights.  The ordering of the weights correspond to the
 ordering of fields as indexed.
@@ -543,6 +673,32 @@ sub SetWeights {
                 croak("Weight: $weight is not an integer") unless ($weight =~ /^\d+$/);
         }
         $self->{_weights} = $weights;
+	return $self;
+}
+
+=head2 SetFieldWeights
+    
+    $sph->SetFieldWeights(\%weights);
+
+Set per-field (integer) weights by field name.  The weights hash provides field
+name to weight mappings.
+
+Takes precedence over L<SetWeights>.
+
+Unknown names will be silently ignored.  Missing fields will be given a weight of 1.
+
+Returns $sph.
+
+=cut
+
+sub SetFieldWeights {
+        my $self = shift;
+        my $weights = shift;
+        croak("Weights is not a hash reference") unless (ref($weights) eq 'HASH');
+        foreach my $field (keys %$weights) {
+	    croak("Weight: $weights->{$field} is not an integer >= 0") unless ($weights->{$field} =~ /^\d+$/);
+        }
+        $self->{_fieldweights} = $weights;
 	return $self;
 }
 
@@ -584,8 +740,8 @@ sub SetIDRange {
 	my $self = shift;
 	my $min = shift;
 	my $max = shift;
-	croak("min_id is not an integer") unless ($min =~ /^\d+$/);
-	croak("max_id is not an integer") unless ($max =~ /^\d+$/);
+	croak("min_id is not numeric") unless ($min =~  m/$num_re/);
+	croak("max_id is not numeric") unless ($max =~  m/$num_re/);
 	croak("min_id is larger than or equal to max_id") unless ($min < $max);
 	$self->{_min_id} = $min;
 	$self->{_max_id} = $max;
@@ -697,7 +853,7 @@ sub SetFilterFloatRange {
 
     $sph->SetGeoAnchor($attrlat, $attrlong, $lat, $long);
 
-Setup geographical anchor point for using @geodist in filters and sorting.
+Setup anchor point for using geosphere distance calculations in filters and sorting.
 Distance will be computed with respect to this point
 
 =over 4
@@ -722,7 +878,7 @@ sub SetGeoAnchor {
     croak("attrlat is not defined") unless defined $attrlat;
     croak("attrlong is not defined") unless defined $attrlong;
     croak("lat: $lat is not numeric") unless ($lat =~ m/$num_re/);
-    croak("long: $long is not numeric") unless ($long =~ m/$num_re$/);
+    croak("long: $long is not numeric") unless ($long =~ m/$num_re/);
 
     $self->{_anchor} = { 
 			 attrlat => $attrlat, 
@@ -752,27 +908,27 @@ $func is one of:
 
 =over 4
 
-=item SPH_GROUPBY_DAY
+=item * SPH_GROUPBY_DAY
 
 Group by day (assumes timestamp type attribute of form YYYYMMDD)
 
-=item SPH_GROUPBY_WEEK
+=item * SPH_GROUPBY_WEEK
 
 Group by week (assumes timestamp type attribute of form YYYYNNN)
 
-=item SPH_GROUPBY_MONTH
+=item * SPH_GROUPBY_MONTH
 
 Group by month (assumes timestamp type attribute of form YYYYMM)
 
-=item SPH_GROUPBY_YEAR
+=item * SPH_GROUPBY_YEAR
 
 Group by year (assumes timestamp type attribute of form YYYY)
 
-=item SPH_GROUPBY_ATTR
+=item * SPH_GROUPBY_ATTR
 
 Group by attribute value
 
-=item SPH_GROUPBY_ATTRPAIR
+=item * SPH_GROUPBY_ATTRPAIR
 
 Group by two attributes, being the given attribute and the attribute that
 immediately follows it in the sequence of indexed attributes.  The specified
@@ -871,6 +1027,7 @@ sub SetRetries {
     return $self;
 }
 
+
 =head2 ResetFilters
 
     $sph->ResetFilters;
@@ -892,7 +1049,7 @@ sub ResetFilters {
 
     $sph->ResetGroupBy;
 
-Clear all group-by settings.
+Clear all group-by settings (for multi-queries)
 
 =cut
 
@@ -962,10 +1119,10 @@ sub Query {
     croak("_reqs is not empty") unless @{$self->{_reqs}} == 0;
 
     $self->AddQuery($query, $index);
-    my $results = $self->RunQueries or return undef;
+    my $results = $self->RunQueries or return;
     $self->_Error($results->[0]->{error}) if $results->[0]->{error};
     $self->_Warning($results->[0]->{warning}) if $results->[0]->{warning};
-    return undef if $results->[0]->{status} && $results->[0]->{status} == SEARCHD_ERROR;
+    return if $results->[0]->{status} && $results->[0]->{status} == SEARCHD_ERROR;
 
     return $results->[0];
 }
@@ -1009,12 +1166,14 @@ sub AddQuery {
     ##################
 
     my $req;
-    $req = pack ( "NNNN", $self->{_offset}, $self->{_limit}, $self->{_mode}, $self->{_sort} ); # mode and limits
+    $req = pack ( "NNNNN", $self->{_offset}, $self->{_limit}, $self->{_mode}, $self->{_ranker}, $self->{_sort} ); # mode and limits
     $req .= pack ( "N/a*", $self->{_sortby});
     $req .= pack ( "N/a*", $query ); # query itself
     $req .= pack ( "N*", scalar(@{$self->{_weights}}), @{$self->{_weights}});
     $req .= pack ( "N/a*", $index); # indexes
-    $req .= pack ( "NNN", 0, int($self->{_min_id}), int($self->{_max_id}) ); # id32 range
+    $req .= pack ( "N", 1) 
+	. $self->_sphPack64($self->{_min_id})
+	. $self->_sphPack64($self->{_max_id}); # id64 range
 
     # filters
     $req .= pack ( "N", scalar @{$self->{_filters}} );
@@ -1060,6 +1219,13 @@ sub AddQuery {
     $req .= pack( "N", scalar keys %{$self->{_indexweights}});
     $req .= pack ( "N/a*N", $_, $self->{_indexweights}->{$_} ) for keys %{$self->{_indexweights}};
 
+    # max query time
+    $req .= pack ( "N", $self->{_maxquerytime} );
+
+    # per-field weights
+    $req .= pack ( "N", scalar keys %{$self->{_fieldweights}} );
+    $req .= pack ( "N/a*N", $_, $self->{_fieldweights}->{$_}) for keys %{$self->{_fieldweights}};
+
     push(@{$self->{_reqs}}, $req);
 
     return scalar $#{$self->{_reqs}};
@@ -1097,10 +1263,10 @@ sub RunQueries {
 
     unless (@{$self->{_reqs}}) {
 	$self->_Error("no queries defined, issue AddQuery() first");
-	return undef;
+	return;
     }
 
-    my $fp = $self->_Connect() or return undef;
+    my $fp = $self->_Connect() or return;
 
     ##################
     # send query, get response
@@ -1113,7 +1279,7 @@ sub RunQueries {
     $self->{_reqs} = [];
 		   
     my $response = $self->_GetResponse ( $fp, VER_COMMAND_SEARCH );
-    return undef unless $response;
+    return unless $response;
 
     ##################
     # parse response
@@ -1173,9 +1339,8 @@ sub RunQueries {
 	while ( $count-->0 && $p<$max ) {
 	    my $data = {};
 	    if ($id64) {
-		( $data->{dochi}, $data->{doclo}, $data->{weight} ) = unpack("N*N*N*", substr($response,$p,12));
-		$data->{doc} = ($data->{dochi} << 32) + $data->{doclo};
-		$p += 12;
+		$data->{doc} = $self->_sphUnpack64(substr($response, $p, 8)); $p += 8;
+		$data->{weight} = unpack("N*", substr($response, $p, 4)); $p += 4;
 	    }
 	    else {
 		( $data->{doc}, $data->{weight} ) = unpack("N*N*", substr($response,$p,8));
@@ -1287,7 +1452,7 @@ sub BuildExcerpts {
 		    && defined($index) 
 		    && defined($words) 
 		    && ref($opts) eq 'HASH');
-        my $fp = $self->_Connect() or return undef;
+        my $fp = $self->_Connect() or return;
 
 	##################
 	# fixup options
@@ -1404,7 +1569,7 @@ sub UpdateAttributes  {
 
     for my $id (keys %$values) {
 	my $entry = $values->{$id};
-	croak("value id $id is not an integer") unless ($id =~ /^(\d+)$/o);
+	croak("value id $id is not numeric") unless ($id =~ /$num_re/);
 	croak("value entry must be an array") unless ref($entry) eq "ARRAY";
 	croak("size of values must match size of attrs") unless @$entry == @$attrs;
 	for my $v (@$entry) {
@@ -1422,20 +1587,20 @@ sub UpdateAttributes  {
     $req .= pack ( "N", scalar keys %$values );
     foreach my $id (keys %$values) {
 	my $entry = $values->{$id};
-	$req .= pack ( "N", $id );
+	$req .= $self->_sphPack64($id);
 	for my $v ( @$entry ) {
 	    $req .= pack ( "N", $v );
 	}
     }
 
     ## connect, send query, get response
-    my $fp = $self->_Connect() or return undef;
+    my $fp = $self->_Connect() or return;
 
     $req = pack ( "nnN/a*", SEARCHD_COMMAND_UPDATE, VER_COMMAND_UPDATE, $req); ## add header
     send ( $fp, $req, 0);
 
     my $response = $self->_GetResponse ( $fp, VER_COMMAND_UPDATE );
-    return undef unless $response;
+    return unless $response;
 
     ## parse response
     my ($updated) = unpack ( "N*", substr ( $response, 0, 4 ) );

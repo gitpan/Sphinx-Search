@@ -68,7 +68,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 46;
+plan tests => 51;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -192,6 +192,18 @@ for (1 .. @{$results->{matches}} - 1) {
 }
 ok($order_ok, 'Weighted index');
 
+# SetFieldWeights
+$sphinx->SetMatchMode(SPH_MATCH_ANY)
+    ->SetSortMode(SPH_SORT_RELEVANCE)
+    ->SetFieldWeights({ field2 => 2, field1 => 10 });
+$results = $sphinx->Query("bb ccc");
+ok($results, "Results for 'bb ccc'");
+print $sphinx->GetLastError unless $results;
+$order_ok = 1;
+for (1 .. @{$results->{matches}} - 1) {
+    $order_ok = 0, last unless $results->{matches}->[$_ - 1]->{weight} >= $results->{matches}->[$_]->{weight} && $results->{matches}->[$_]->{weight} > 1;
+}
+ok($order_ok, 'Field-weighted relevance');
 
 # Excerpts
 $results = $sphinx->BuildExcerpts([ "bb bb ccc dddd", "bb ccc dddd" ],
@@ -287,8 +299,21 @@ $results = $sphinx->RunQueries;
 ok(@$results == 2, "Results for batch query with error");
 ok($results->[0]->{error}, "Error result");
 
+SKIP: {
+# 64 bit ID
+    $sphinx->ResetFilters->SetMatchMode(SPH_MATCH_ANY)
+	->SetIDRange(0, '18446744073709551615')
+	->SetSortMode(SPH_SORT_RELEVANCE);
+    $results = $sphinx->Query("xx");
+    skip "64 bit IDs not supported", 3 if !$results && $sphinx->GetLastError =~ m/zero-sized/;
+    ok($results, "Results for 'xx'");
+    print $sphinx->GetLastError unless $results;
+    ok($results->{total} == 1, "ID 64 results count");
+    is($results->{matches}->[0]->{doc}, '9223372036854775807', "ID 64");
 #use Data::Dumper;
 #print Dumper($results);
+}
+
 
 
 sub create_db {
@@ -297,19 +322,21 @@ sub create_db {
     eval {
 	$dbi->do(qq{DROP TABLE IF EXISTS \`$dbtable\`});
 	$dbi->do(qq{CREATE TABLE \`$dbtable\` (
-					     \`id\` INT NOT NULL auto_increment,
+					     \`id\` BIGINT UNSIGNED NOT NULL auto_increment,
 					     \`field1\` TEXT,
 					     \`field2\` TEXT,
 				             \`attr1\` INT NOT NULL,
 				             \`lat\` FLOAT NOT NULL,
 				             \`long\` FLOAT NOT NULL,
 					     PRIMARY KEY (\`id\`))});
-    $dbi->do(qq{INSERT INTO \`$dbtable\` (\`field1\`,\`field2\`,\`attr1\`,\`lat\`,\`long\`) VALUES
-		   ('a', 'bb', 2, 0.35, 0.70),
-		   ('a', 'bb ccc', 4, 0.70, 0.35),
-		   ('a', 'bb ccc dddd', 1, 0.35, 0.70),
-		   ('a bb', 'bb ccc dddd', 5, 0.35, 0.70),
-		   ('bb', 'bb bb ccc dddd', 3, 1.5, 1.5)});
+    $dbi->do(qq{INSERT INTO \`$dbtable\` (\`id\`,\`field1\`,\`field2\`,\`attr1\`,\`lat\`,\`long\`) VALUES
+		   (1, 'a', 'bb', 2, 0.35, 0.70),
+		   (2, 'a', 'bb ccc', 4, 0.70, 0.35),
+		   (3, 'a', 'bb ccc dddd', 1, 0.35, 0.70),
+		   (4, 'a bb', 'bb ccc dddd', 5, 0.35, 0.70),
+		   (5, 'bb', 'bb bb ccc dddd', 3, 1.5, 1.5),
+		   ('9223372036854775807', 'xx', 'xx', 9000, 150, 150)
+		});
     };
     if ($@) {
 	print STDERR "Failed to create/load database table: $@\n";
@@ -327,7 +354,6 @@ sub write_config {
 
     source test_jjs_src {
 	type = mysql
-	strip_html = 0
 	sql_host = $dbhost
 	sql_user = $dbuser
 	sql_pass = $dbpass
@@ -342,6 +368,7 @@ sub write_config {
     index test_jjs_index {
 	source = test_jjs_src
 	path = $testdir/test_jjs
+	html_strip = 0
 	min_word_len = 1
 	charset_type = utf-8
     }

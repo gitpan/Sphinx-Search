@@ -27,5 +27,9 @@ Revision history for Sphinx-Search
 	Fixed handling of error conditions on recv and connect (Igor Gerdler,
 	rt.cpan.org #30934, #30935)
 
-0.09	2007-12012
+0.09	2007-12-12
 	Upgraded API for sphinx-0.9.8-svn-r985
+
+0.10	2008-01-30
+	Upgraded API for sphinx-0.9.8-svn-r1112
+
