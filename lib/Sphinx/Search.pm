@@ -16,9 +16,11 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.10
+This version is 0.11
 
-Use version 0.10 for Sphinx 0.9.8-svn-r1112 and later
+Use version 0.11 for Sphinx 0.9.8-rc1 and later
+
+Use version 0.10 for Sphinx 0.9.8-svn-r1112
 
 Use version 0.09 for Sphinx 0.9.8-svn-r985
 
@@ -32,7 +34,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 =head1 SYNOPSIS
 
@@ -66,11 +68,13 @@ our @EXPORT = qw(
 use constant SEARCHD_COMMAND_SEARCH	=> 0;
 use constant SEARCHD_COMMAND_EXCERPT	=> 1;
 use constant SEARCHD_COMMAND_UPDATE	=> 2;
+use constant SEARCHD_COMMAND_KEYWORDS	=> 3;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x112;
+use constant VER_COMMAND_SEARCH		=> 0x113;
 use constant VER_COMMAND_EXCERPT	=> 0x100;
 use constant VER_COMMAND_UPDATE	        => 0x101;
+use constant VER_COMMAND_KEYWORDS       => 0x100;
 
 # known searchd status codes
 use constant SEARCHD_OK			=> 0;
@@ -1115,10 +1119,11 @@ sub Query {
     my $self = shift;
     my $query = shift;
     my $index = shift || '*';
+    my $comment = shift || '';
 
     croak("_reqs is not empty") unless @{$self->{_reqs}} == 0;
 
-    $self->AddQuery($query, $index);
+    $self->AddQuery($query, $index, $comment);
     my $results = $self->RunQueries or return;
     $self->_Error($results->[0]->{error}) if $results->[0]->{error};
     $self->_Warning($results->[0]->{warning}) if $results->[0]->{warning};
@@ -1160,6 +1165,7 @@ sub AddQuery {
     my $self = shift;
     my $query = shift;
     my $index = shift || '*';
+    my $comment = shift || '';
 
     ##################
     # build request
@@ -1225,6 +1231,8 @@ sub AddQuery {
     # per-field weights
     $req .= pack ( "N", scalar keys %{$self->{_fieldweights}} );
     $req .= pack ( "N/a*N", $_, $self->{_fieldweights}->{$_}) for keys %{$self->{_fieldweights}};
+    # comment
+    $req .= pack ( "N/a*", $comment);
 
     push(@{$self->{_reqs}}, $req);
 
@@ -1522,6 +1530,103 @@ sub BuildExcerpts {
 		$pos += $len;
         }
         return $res;
+}
+
+
+=head2 BuildKeywords
+
+    $results = $sph->BuildKeywords($query, $index, $hits)
+
+Generate keyword list for a given query
+Returns undef on failure,
+Returns an array of hashes, where each hash describes a word in the query with the following keys:
+
+=over 4
+
+=item * tokenized 
+
+Tokenised term from query
+
+=item * normalized 
+
+Normalised term from query
+
+=item * docs 
+
+Number of docs in which word was found (if $hits is true)
+
+=item * hits 
+
+Number of occurrences of word (if $hits is true)
+
+=back
+
+=cut
+
+sub BuildKeywords {
+    my ( $self, $query, $index, $hits ) = @_;
+
+    my $fp = $self->_Connect() or return;
+
+    # v.1.0 req
+    my $req = pack("N/a*", $query);
+    $req .= pack("N/a*", $index);
+    $req .= pack("N", $hits);
+
+    ##################
+    # send query, get response
+    ##################
+
+    $req = pack ( "nnN/a*", SEARCHD_COMMAND_KEYWORDS, VER_COMMAND_KEYWORDS, $req);
+    send($fp, $req, 0);
+    my $response = $self->_GetResponse ( $fp, VER_COMMAND_KEYWORDS );
+    return unless $response;
+
+    ##################
+    # parse response
+    ##################
+
+    my $p = 0;
+    my @res;
+    my $rlen = length($response);
+
+    my $nwords = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
+
+    for (my $i=0; $i < $nwords; $i++ ) {
+	my $len = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
+
+	my $tokenized = $len ? substr ( $response, $p, $len ) : ""; $p += $len;
+	$len = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
+
+	my $normalized = $len ? substr ( $response, $p, $len ) : ""; $p += $len;
+	my %data = ( tokenized => $tokenized, normalized => $normalized );
+	
+	if ($hits) {
+	    ( $data{docs}, $data{hits} ) = unpack("N*N*", substr($response,$p,8));
+	    $p += 8;
+	    
+	}
+	push(@res, \%data);
+    }
+    if ( $p > $rlen ) {
+	$self->_Error("incomplete reply");
+	return;
+    }
+
+    return \@res;
+}
+
+=head2 EscapeString
+
+    $escaped = $sph->EscapeString('abcde!@#$%')
+
+Inserts backslash before all non-word characters in the given string.
+
+=cut
+
+sub EscapeString {
+    my $self = shift;
+    return quotemeta(shift);
 }
 
 

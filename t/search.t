@@ -68,7 +68,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 51;
+plan tests => 53;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
@@ -211,6 +211,28 @@ $results = $sphinx->BuildExcerpts([ "bb bb ccc dddd", "bb ccc dddd" ],
 		       "ccc dddd");
 is_deeply($results, [ 'bb bb <b>ccc</b> <b>dddd</b>', 'bb <b>ccc</b> <b>dddd</b>' ],
 	  "Excerpts");
+
+# Keywords
+$results = $sphinx->BuildKeywords("bb-dddd",  "test_jjs_index", 1);
+is_deeply($results, [
+		     {
+			 'hits' => 8,
+			 'docs' => 5,
+			 'tokenized' => 'bb',
+			 'normalized' => 'bb'
+			 },
+		     {
+			 'hits' => 3,
+			 'docs' => 3,
+			 'tokenized' => 'dddd',
+			 'normalized' => 'dddd'
+			 }
+		     ],
+	  "Keywords");
+
+# EscapeString
+$results = $sphinx->EscapeString(q{abcde!@#$%});
+is($results, 'abcde\!\@\#\$\%', "EscapeString");
 
 # Update
 $sphinx->UpdateAttributes("test_jjs_index", [ qw/attr1/ ], 
