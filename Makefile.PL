@@ -17,6 +17,8 @@ WriteMakefile(
 	'DBI' => 0,
 	'Math::BigInt' => 0,
 	'Config' => 0,
+	'Errno' => 0,
+	'Fcntl' => 0,
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Sphinx-Search-*' },

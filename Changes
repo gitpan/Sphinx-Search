@@ -36,3 +36,6 @@ Revision history for Sphinx-Search
 0.11	2008-03-11
 	Upgraded API for sphinx-0.9.8-rc1
 
+0.12	2008-07-25
+	Upgraded API for sphinx-0.9.8
+

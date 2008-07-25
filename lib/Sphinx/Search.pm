@@ -7,6 +7,8 @@ use Socket;
 use Config;
 use Math::BigInt;
 use base 'Exporter';
+use Fcntl qw(:DEFAULT);
+use Errno;
 
 =head1 NAME
 
@@ -16,7 +18,9 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.11
+This version is 0.12
+
+Use version 0.12 for Sphinx 0.9.8 and later
 
 Use version 0.11 for Sphinx 0.9.8-rc1 and later
 
@@ -34,7 +38,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.11';
+our $VERSION = '0.12';
 
 =head1 SYNOPSIS
 
@@ -196,6 +200,7 @@ sub new {
 	# request storage (for multi-query case)
 	_reqs           => [],
 
+	_timeout        => 0,
 	_connection     => undef,
 	_persistent_connection => 0,
 	_longsize      => $Config{longsize},
@@ -321,11 +326,54 @@ sub _Connect {
 	socket($fp, PF_INET, SOCK_STREAM, getprotobyname('tcp')) || Carp::croak("socket: ".$!);
 	binmode($fp, ':bytes');
 	my $dest = sockaddr_in($self->{_port}, inet_aton($self->{_host}));
-	connect($fp, $dest) or do {
-	    $self->_Error("connection to {$self->{_host}}:{$self->{_port}} failed: $!");
-	    return 0;
-	};
-	
+
+	if ($self->{_timeout}) {
+	    my $flags = fcntl($fp, F_GETFL, 0) or do {
+		$self->_Error("Can't get flags for socket: $!");
+		return 0;
+	    };
+	    fcntl($fp, F_SETFL, $flags | O_NONBLOCK) or do {
+		$self->_Error("Can't set flags for socket: $!");
+		return 0;
+	    };
+		
+	    if (! connect($fp, $dest)) {
+		if (! $!{EINPROGRESS}) {
+		    $self->_Error("connect to {$self->{_host}}:{$self->{_port}} failed: $!");
+		    return 0;
+		}
+		my $count = 0;
+		while ($count < 2) { # until timeout or data received
+		    my $vec = '';
+		    vec($vec, fileno($fp), 1) = 1;
+		    my $n = select($vec, undef, undef, $self->{_timeout});
+		    if ($n < 0) {
+			$self->_Error("connection to {$self->{_host}}:{$self->{_port}} failed: $!");
+			return 0;
+		    }
+		    elsif ($n == 0) {
+			$self->_Error("connection to {$self->{_host}}:{$self->{_port}} timed out");
+			return 0;
+		    }
+		    else {
+			my $tmpbuf = 0;
+			my $ret = recv($fp, $tmpbuf, 4, MSG_PEEK);
+			last if $tmpbuf;
+		    }
+		    $count++;
+		}
+	    }
+	    fcntl($fp, F_SETFL, $flags) or do {
+		$self->_Error("Can't set flags for socket: $!");
+		return 0;
+	    };
+	}
+	else {
+	    connect($fp, $dest) or do {
+		$self->_Error("connection to {$self->{_host}}:{$self->{_port}} failed: $!");
+		return 0;
+	    };
+	}
 	# check version
 	my $buf = '';
 	croak("recv: ".$!) unless defined recv($fp, $buf, 4, 0);
@@ -462,6 +510,24 @@ sub SetServer {
     return $self;
 }
 
+=head2 SetConnectTimeout
+
+    $sph->SetConnectTimeout($timeout)
+
+Set server connection timeout (in seconds).
+
+Returns $sph.
+
+=cut
+
+sub SetConnectTimeout {
+    my $self = shift;
+    my $timeout = shift;
+
+    croak("timeout is not numeric") unless ($timeout =~  m/$num_re/);
+    $self->{_timeout} = $timeout;
+}
+
 =head2 SetLimits
 
     $sph->SetLimits($offset, $limit);
@@ -554,6 +620,7 @@ sub SetMatchMode {
 						   || $mode==SPH_MATCH_PHRASE 
 						   || $mode==SPH_MATCH_BOOLEAN 
 						   || $mode==SPH_MATCH_EXTENDED 
+						   || $mode==SPH_MATCH_FULLSCAN 
 						   || $mode==SPH_MATCH_EXTENDED2 );
         $self->{_mode} = $mode;
 	return $self;
@@ -1401,7 +1468,7 @@ sub RunQueries {
 
     $excerpts = $sph->BuildExcerpts($docs, $index, $words, $opts)
 
-Generation document excerpts for the specified documents.
+Generate document excerpts for the specified documents.
 
 =over 4
 
@@ -1426,6 +1493,7 @@ A hash which contains additional optional highlighting parameters:
 =over 4
 
 =item before_match - a string to insert before a set of matching words, default is "<b>"
+
 =item after_match - a string to insert after a set of matching words, default is "<b>"
 
 =item chunk_separator - a string to insert between excerpts chunks, default is " ... "

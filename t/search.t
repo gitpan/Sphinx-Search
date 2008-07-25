@@ -68,11 +68,22 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 53;
+plan tests => 105;
 
 my $sphinx = Sphinx::Search->new({ port => $sph_port });
 ok($sphinx, "Constructor");
 
+run_all_tests();
+$sphinx->SetMatchMode(SPH_MATCH_ALL)
+    ->SetSortMode(SPH_SORT_RELEVANCE)
+    ->SetRankingMode(SPH_RANK_PROXIMITY_BM25)
+    ->SetWeights([])
+    ->SetFieldWeights({});
+$sphinx->SetConnectTimeout(2);
+run_all_tests();
+
+
+sub run_all_tests {
 # Basic test on 'a'
 my $results = $sphinx->Query("a");
 ok($results, "Results for 'a'");
@@ -335,7 +346,7 @@ SKIP: {
 #use Data::Dumper;
 #print Dumper($results);
 }
-
+			       }
 
 
 sub create_db {
