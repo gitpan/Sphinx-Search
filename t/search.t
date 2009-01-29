@@ -68,9 +68,15 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 105;
+plan tests => 106;
 
-my $sphinx = Sphinx::Search->new({ port => $sph_port });
+my $logger;
+
+#use Log::Log4perl qw/:easy/;
+#Log::Log4perl->easy_init($DEBUG);
+#$logger = Log::Log4perl->get_logger();
+
+my $sphinx = Sphinx::Search->new({ port => $sph_port, log => $logger, debug => 1 });
 ok($sphinx, "Constructor");
 
 run_all_tests();
@@ -326,18 +332,22 @@ ok(@$results == 2, "Results for batch query");
 
 # Batch interface with error
 $sphinx->SetMatchMode(SPH_MATCH_EXTENDED);
-$sphinx->AddQuery("ccc \@dddd");
+$sphinx->AddQuery("ccc @\@dddd");
 $sphinx->AddQuery("dddd");
 $results = $sphinx->RunQueries;
 ok(@$results == 2, "Results for batch query with error");
 ok($results->[0]->{error}, "Error result");
 
-SKIP: {
+TODO: {
+    todo_skip "ID 64 bug in Sphinx 0.9.9", 3;
+
 # 64 bit ID
     $sphinx->ResetFilters->SetMatchMode(SPH_MATCH_ANY)
-	->SetIDRange(0, '18446744073709551615')
+#	->SetIDRange(0, '18446744073709551615')
 	->SetSortMode(SPH_SORT_RELEVANCE);
     $results = $sphinx->Query("xx");
+    print Dumper($results);
+    print "ERROR: " . $sphinx->GetLastError . "\n";
     skip "64 bit IDs not supported", 3 if !$results && $sphinx->GetLastError =~ m/zero-sized/;
     ok($results, "Results for 'xx'");
     print $sphinx->GetLastError unless $results;
@@ -346,8 +356,28 @@ SKIP: {
 #use Data::Dumper;
 #print Dumper($results);
 }
-			       }
+}
 
+TODO: {
+  todo_skip "persistent connections not working", 1;
+
+  ok(persistent_connection_test($sphinx), "persistent connection");
+}
+
+sub persistent_connection_test {
+  my $sph = shift;
+
+  $sph->Open() or return 0;
+  $sph->ResetFilters->SetMatchMode(SPH_MATCH_ANY)
+    ->SetSortMode(SPH_SORT_RELEVANCE);
+  for (1..10) {
+    my $results = $sphinx->Query("bb");
+    return 0 unless $results->{total} == 5;
+  }
+  $sph->Close() or return 0;
+
+  return 1;
+}
 
 sub create_db {
     my ($dbi) = @_;
@@ -406,7 +436,7 @@ sub write_config {
 	charset_type = utf-8
     }
     searchd {
-	port = $sph_port
+	listen = $sph_port
 	log = $testdir/searchd.log
 	query_log = $testdir/query.log
 	pid_file = $pidfile
