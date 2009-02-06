@@ -42,3 +42,6 @@ Revision history for Sphinx-Search
 0.13_01	2009-01-29
 	Upgraded API for sphinx-0.9.9-rc1, development release.   Open/Close
 	for persistent connections are known to not work; also 64 bit IDs fail.
+
+0.14	2009-02-06
+	Fixed 64 bit ID problem (testing issue) and persistent connections.

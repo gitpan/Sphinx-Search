@@ -20,10 +20,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-This version is 0.13_01, development release for Sphinx 0.9.9-rc1.  Open/Close
-for persistent connections are known to not work; also 64 bit IDs fail.
-
-Use version 0.13 for Sphinx 0.9.9-rc1 and later
+Use version 0.14 for Sphinx 0.9.9-rc1 and later
 
 Use version 0.12 for Sphinx 0.9.8
 
@@ -43,7 +40,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.13_01';
+our $VERSION = '0.14';
 
 =head1 SYNOPSIS
 
@@ -531,9 +528,12 @@ sub _GetResponse {
 	my ($status, $ver, $len ) = unpack("n2N", $header);
         my $response = q{};
 	my $lasterror = q{};
+	my $lentotal = 0;
 	while (my $rlen = $fp->read(my $chunk, $len)) {
 	    $lasterror = $!, last if $rlen < 0;
 	    $response .= $chunk;
+	    $lentotal += $rlen;
+	    last if $lentotal >= $len;
 	}
         close($fp) unless $self->{_socket};
 

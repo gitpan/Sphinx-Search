@@ -68,7 +68,7 @@ unless (run_searchd($configfile)) {
 }
 
 # Everything is in place; run the tests
-plan tests => 106;
+plan tests => 107;
 
 my $logger;
 
@@ -248,8 +248,8 @@ is_deeply($results, [
 	  "Keywords");
 
 # EscapeString
-$results = $sphinx->EscapeString(q{abcde!@#$%});
-is($results, 'abcde\!\@\#\$\%', "EscapeString");
+$results = $sphinx->EscapeString(q{$#abcde!@%});
+is($results, '\$\#abcde\!\@\%', "EscapeString");
 
 # Update
 $sphinx->UpdateAttributes("test_jjs_index", [ qw/attr1/ ], 
@@ -337,44 +337,44 @@ $sphinx->AddQuery("dddd");
 $results = $sphinx->RunQueries;
 ok(@$results == 2, "Results for batch query with error");
 ok($results->[0]->{error}, "Error result");
-
-TODO: {
-    todo_skip "ID 64 bug in Sphinx 0.9.9", 3;
-
+			       
 # 64 bit ID
+# Check for id64 support
+SKIP: {
+    my $sig = `$searchd`;
+    skip "searchd not compiled with --enable-id64: 64 bit IDs not supported", 4 unless $sig =~ m/id64/;
     $sphinx->ResetFilters->SetMatchMode(SPH_MATCH_ANY)
-#	->SetIDRange(0, '18446744073709551615')
+	->SetIDRange(0, '18446744073709551615')
 	->SetSortMode(SPH_SORT_RELEVANCE);
     $results = $sphinx->Query("xx");
-    print Dumper($results);
-    print "ERROR: " . $sphinx->GetLastError . "\n";
-    skip "64 bit IDs not supported", 3 if !$results && $sphinx->GetLastError =~ m/zero-sized/;
+#print Dumper($results);
+#skip "64 bit IDs not supported", 3 if !$results && $sphinx->GetLastError =~ m/zero-sized/;
     ok($results, "Results for 'xx'");
     print $sphinx->GetLastError unless $results;
     ok($results->{total} == 1, "ID 64 results count");
     is($results->{matches}->[0]->{doc}, '9223372036854775807', "ID 64");
-#use Data::Dumper;
-#print Dumper($results);
-}
 }
 
-TODO: {
-  todo_skip "persistent connections not working", 1;
-
-  ok(persistent_connection_test($sphinx), "persistent connection");
+ok(persistent_connection_test($sphinx), "persistent connection");
 }
 
 sub persistent_connection_test {
   my $sph = shift;
 
-  $sph->Open() or return 0;
+  unless ($sph->Open()) {
+      warn "Open() failed";
+      return 0;
+  }
   $sph->ResetFilters->SetMatchMode(SPH_MATCH_ANY)
     ->SetSortMode(SPH_SORT_RELEVANCE);
   for (1..10) {
-    my $results = $sphinx->Query("bb");
+    my $results = $sphinx->Query("bb") or die "No results";
     return 0 unless $results->{total} == 5;
   }
-  $sph->Close() or return 0;
+  unless ($sph->Close()) {
+      warn "Close() failed";
+      return 0;
+  }
 
   return 1;
 }
