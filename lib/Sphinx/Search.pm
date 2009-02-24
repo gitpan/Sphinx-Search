@@ -20,7 +20,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.14 for Sphinx 0.9.9-rc1 and later
+Use version 0.15 for Sphinx 0.9.9-svn-r1674 and later
 
 Use version 0.12 for Sphinx 0.9.8
 
@@ -40,7 +40,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 =head1 SYNOPSIS
 
@@ -1643,7 +1643,7 @@ A hash which contains additional optional highlighting parameters:
 
 Returns undef on failure.
 
-Returns an array of string excerpts on success.
+Returns an array ref of string excerpts on success.
 
 =cut
 
@@ -1696,7 +1696,7 @@ sub BuildExcerpts {
 	# documents
 	$req .= pack ( "N", scalar(@$docs) );
 	foreach my $doc (@$docs) {
-		croak('BuildExcepts: Found empty document in $docs') unless ($doc);
+		croak('BuildExcerpts: Found empty document in $docs') unless ($doc);
 		$req .= pack("N/a*", $doc);
 	}
 
@@ -1708,7 +1708,7 @@ sub BuildExcerpts {
 	$self->_Send($fp, $req);
 	
 	my $response = $self->_GetResponse($fp, VER_COMMAND_EXCERPT);
-	return 0 unless ($response);
+	return unless $response;
 
 	my ($pos, $i) = 0;
 	my $res = [];	# Empty hash ref
@@ -1719,7 +1719,7 @@ sub BuildExcerpts {
 
                 if ( $pos+$len > $rlen ) {
 			$self->_Error("incomplete reply");
-			return 0;
+			return;
 		}
 		push(@$res, substr ( $response, $pos, $len ));
 		$pos += $len;

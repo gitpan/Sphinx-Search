@@ -45,3 +45,7 @@ Revision history for Sphinx-Search
 
 0.14	2009-02-06
 	Fixed 64 bit ID problem (testing issue) and persistent connections.
+
+0.15	2009-02-25
+	Fixed return values in BuildExcerpts (some error conditions returned 0,
+	should have been undef) (rt.cpan.org #43583)
