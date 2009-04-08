@@ -20,7 +20,9 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.15 for Sphinx 0.9.9-svn-r1674 and later
+Use version 0.16 for Sphinx 0.9.9-rc2 and later
+
+Use version 0.15 for Sphinx 0.9.9-svn-r1674
 
 Use version 0.12 for Sphinx 0.9.8
 
@@ -40,7 +42,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.15';
+our $VERSION = '0.16';
 
 =head1 SYNOPSIS
 
@@ -76,12 +78,14 @@ use constant SEARCHD_COMMAND_EXCERPT	=> 1;
 use constant SEARCHD_COMMAND_UPDATE	=> 2;
 use constant SEARCHD_COMMAND_KEYWORDS	=> 3;
 use constant SEARCHD_COMMAND_PERSIST	=> 4;
+use constant SEARCHD_COMMAND_STATUS	=> 5;
 
 # current client-side command implementation versions
 use constant VER_COMMAND_SEARCH		=> 0x116;
 use constant VER_COMMAND_EXCERPT	=> 0x100;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
+use constant VER_COMMAND_STATUS         => 0x100;
 
 # known searchd status codes
 use constant SEARCHD_OK			=> 0;
@@ -1464,7 +1468,7 @@ sub RunQueries {
 	return;
     }
 
-    my $fp = $self->_Connect() or return;
+    my $fp = $self->_Connect() or do { $self->{_reqs} = []; return };
 
     ##################
     # send query, get response
@@ -1981,6 +1985,49 @@ sub Close {
     return 1;
 }
 
+=head2 Status
+
+    $status = $sph->Status()
+
+Queries searchd status, and returns a hash of status variable name and value pairs. 
+
+Returns undef on failure.
+
+=cut
+
+sub Status {
+    
+    my $self = shift;
+
+    my $fp = $self->_Connect() or return;
+   
+    my $req = pack("nnNN", SEARCHD_COMMAND_STATUS, VER_COMMAND_STATUS, 4, 1 ); # len=4, body=1
+    $self->_Send($fp, $req) or return;
+    my $response = $self->_GetResponse ( $fp, VER_COMMAND_STATUS );
+    return unless $response;
+
+    my $p = 0;
+    my ($rows, $cols) = unpack("N*N*", substr ( $response, $p, 8 ) ); $p += 8;
+
+    return {} unless $rows && $cols;
+    my %res;
+    for (1 .. $rows ) {
+	my @entry;
+	for ( 1 .. $cols) {
+	    my $len = unpack("N*", substr ( $response, $p, 4 ) ); $p += 4;
+	    push(@entry, $len ? substr ( $response, $p, $len ) : ""); $p += $len;
+	}
+	if ($cols <= 2) {
+	    $res{$entry[0]} = $entry[1];
+	}
+	else {
+	    my $name = shift @entry;
+	    $res{$name} = \@entry;
+	}
+    }
+    return \%res;
+}
+    
 
 =head1 SEE ALSO
 

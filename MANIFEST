@@ -1,11 +1,16 @@
 Changes
-MANIFEST
-META.yml # Will be created by "make dist"
-Makefile.PL
-README
 lib/Sphinx/Search.pm
+Makefile.PL
+MANIFEST			This list of files
+META.yml
+README
 t/00-load.t
+t/64bitid.t
 t/boilerplate.t
+t/connect.t
 t/pod-coverage.t
 t/pod.t
 t/search.t
+t/setserver.t
+t/testlib/TestDB.pm
+
