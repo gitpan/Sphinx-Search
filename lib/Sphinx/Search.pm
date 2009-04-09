@@ -21,7 +21,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.17 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
+Use version 0.18 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
 
 Use version 0.15 for Sphinx 0.9.9-svn-r1674
 
@@ -43,7 +43,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 =head1 SYNOPSIS
 

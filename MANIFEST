@@ -12,3 +12,5 @@ t/pod-coverage.t
 t/pod.t
 t/search.t
 t/setserver.t
+t/testlib/TestDB.pm
+

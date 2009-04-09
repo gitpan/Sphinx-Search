@@ -56,3 +56,6 @@ Revision history for Sphinx-Search
 0.17	2009-04-09
 	Added support for inserting encoder/decoder for translating charsets between perl and searchd.
 	Additional UTF-8 tests.
+
+0.18	2009-04-09
+	Included missing test files in CPAN package.
