@@ -38,7 +38,7 @@ unless ($testdb->run_searchd()) {
 }
 
 # Everything is in place; run the tests
-plan tests => 109;
+plan tests => 117;
 
 my $logger;
 
@@ -198,6 +198,12 @@ $results = $sphinx->BuildExcerpts([ "bb bb ccc dddd", "bb ccc dddd" ],
 		       "ccc dddd");
 is_deeply($results, [ 'bb bb <b>ccc</b> <b>dddd</b>', 'bb <b>ccc</b> <b>dddd</b>' ],
 	  "Excerpts");
+# Excerpts UTF8
+$results = $sphinx->BuildExcerpts([ "\x{65e5}\x{672c}\x{8a9e}" ],
+		       "test_jjs_index",
+		       "\x{65e5}\x{672c}\x{8a9e}");
+is_deeply($results, [ "<b>\x{65e5}\x{672c}\x{8a9e}</b>" ], "UTF8 Excerpts");
+
 
 # Keywords
 $results = $sphinx->BuildKeywords("bb-dddd",  "test_jjs_index", 1);
@@ -216,6 +222,18 @@ is_deeply($results, [
 			 }
 		     ],
 	  "Keywords");
+
+# Keywords UTF8
+$results = $sphinx->BuildKeywords("\x{65e5}\x{672c}\x{8a9e}",  "test_jjs_index", 1);
+is_deeply($results, [
+          {
+            'hits' => 1,
+            'docs' => 1,
+            'tokenized' => "\x{65e5}\x{672c}\x{8a9e}",
+            'normalized' => "\x{65e5}\x{672c}\x{8a9e}"
+          }
+	  ]);
+
 
 # EscapeString
 $results = $sphinx->EscapeString(q{$#abcde!@%});
@@ -293,6 +311,9 @@ $results = $sphinx->Query("bb\x{2122}");
 ok($results, "UTF-8");
 print $sphinx->GetLastError unless $results;
 ok($results->{total} == 5, "UTF-8 results count");
+$results = $sphinx->Query("\x{65e5}\x{672c}\x{8a9e}");
+ok($results->{total} == 1, "UTF-8 japanese results count");
+ok($results->{words}->{"\x{65e5}\x{672c}\x{8a9e}"}, "UTF-8 japanese match");
 
 # Batch interface
 $sphinx->AddQuery("ccc");
@@ -313,7 +334,7 @@ ok($results->[0]->{error}, "Error result");
 SKIP: {
     my $searchd = $testdb->searchd;
     my $sig = `$searchd`;
-    skip "searchd not compiled with --enable-id64: 64 bit IDs not supported", 4 unless $sig =~ m/id64/;
+    skip "searchd not compiled with --enable-id64: 64 bit IDs not supported", 3 unless $sig =~ m/id64/;
     $sphinx->ResetFilters->SetMatchMode(SPH_MATCH_ANY)
 	->SetIDRange(0, '18446744073709551615')
 	->SetSortMode(SPH_SORT_RELEVANCE);

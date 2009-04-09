@@ -23,7 +23,7 @@ unless ($testdb->run_searchd()) {
     plan skip_all => "Failed to run searchd; skipping tests.";
 }
 
-plan tests => 4;
+plan tests => 5;
 
 
 my $sphinx = Sphinx::Search->new({ port => $testdb->searchd_port });

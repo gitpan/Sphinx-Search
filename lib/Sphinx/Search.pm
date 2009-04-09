@@ -11,6 +11,7 @@ use Config;
 use Math::BigInt lib => 'GMP';
 use IO::Socket::INET;
 use IO::Socket::UNIX;
+use Encode qw/encode_utf8 decode_utf8/;
 
 =head1 NAME
 
@@ -20,7 +21,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.16 for Sphinx 0.9.9-rc2 and later
+Use version 0.17 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
 
 Use version 0.15 for Sphinx 0.9.9-svn-r1674
 
@@ -42,7 +43,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.16';
+our $VERSION = '0.17';
 
 =head1 SYNOPSIS
 
@@ -314,12 +315,15 @@ sub new {
 	_timeout        => 0,
 
 	_longsize      => $Config{longsize},
+
+	_string_encoder => \&encode_utf8,
+	_string_decoder => \&decode_utf8,
     };
     bless $self, ref($class) || $class;
 
     # These options are supported in the constructor, but not recommended 
     # since there is no validation.  Use the Set* methods instead.
-    my %legal_opts = map { $_ => 1 } qw/host port offset limit mode weights sort sortby groupby groupbyfunc maxmatches cutoff retrycount retrydelay log debug/;
+    my %legal_opts = map { $_ => 1 } qw/host port offset limit mode weights sort sortby groupby groupbyfunc maxmatches cutoff retrycount retrydelay log debug string_encoder string_decoder/;
     for my $opt (keys %$options) {
 	$self->{'_' . $opt} = $options->{$opt} if $legal_opts{$opt};
     }
@@ -384,6 +388,53 @@ and bad responses).  Returns true value on connection error.
 
 sub IsConnectError {
     return shift->{_connerror};
+}
+
+=head2 SetEncoders
+
+    $sph->SetEncoders(\&encode_function, \&decode_function)
+
+COMPATIBILITY NOTE: SetEncoders() was introduced in version 0.17.
+Prior to that, all strings were considered to be sequences of bytes
+which may have led to issues with multi-byte characters.  If you were
+previously encoding/decoding strings external to Sphinx::Search, you
+will need to disable encoding/decoding by setting Sphinx::Search to
+use raw values as explained below (or modify your code and let
+Sphinx::Search do the recoding).
+
+Set the string encoder/decoder functions for transferring strings
+between perl and Sphinx.  The encoder should take the perl internal
+representation and convert to the bytestream that searchd expects, and
+the decoder should take the bytestream returned by searchd and convert to
+perl format.
+
+The searchd format will depend on the 'charset_type' index setting in
+the Sphinx configuration file.
+
+The coders default to encode_utf8 and decode_utf8 respectively, which
+are compatible with the 'utf8' charset_type.
+
+If either the encoder or decoder functions are left undefined in the
+call to SetEncoders, they return to their default values.  
+
+If you wish to send raw values (no encoding/decoding), supply a
+function that simply returns its argument, e.g. 
+
+    $sph->SetEncoders( sub { shift }, sub { shift });
+
+Returns $sph.
+
+=cut
+
+sub SetEncoders {
+    my $self = shift;
+    my $encoder = shift;
+    my $decoder = shift;
+
+    $self->{_string_encoder} = $encoder ? $encoder : \&encode_utf8;
+    $self->{_string_decoder} = $decoder ? $decoder : \&decode_utf8;
+	
+    return $self;
 }
 
 =head2 SetServer
@@ -1343,7 +1394,7 @@ sub AddQuery {
     my $req;
     $req = pack ( "NNNNN", $self->{_offset}, $self->{_limit}, $self->{_mode}, $self->{_ranker}, $self->{_sort} ); # mode and limits
     $req .= pack ( "N/a*", $self->{_sortby});
-    $req .= pack ( "N/a*", $query ); # query itself
+    $req .= pack ( "N/a*", $self->{_string_encoder}->($query) ); # query itself
     $req .= pack ( "N*", scalar(@{$self->{_weights}}), @{$self->{_weights}});
     $req .= pack ( "N/a*", $index); # indexes
     $req .= pack ( "N", 1) 
@@ -1581,7 +1632,7 @@ sub RunQueries {
 	while ( $words-->0 && $p < $max) {
 	    my $len = unpack ( "N*", substr ( $response, $p, 4 ) ); 
 	    $p += 4;
-	    my $word = substr ( $response, $p, $len ); 
+	    my $word = $self->{_string_decoder}->( substr ( $response, $p, $len ) ); 
 	    $p += $len;
 	    my ($docs, $hits) = unpack ("N*N*", substr($response, $p, 8));
 	    $p += 8;
@@ -1687,8 +1738,8 @@ sub BuildExcerpts {
 	$flags |= 16 if ( $opts->{"weight_order"} );
 	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
 
-	$req .= pack ( "N", length($index) ) . $index; # req index
-	$req .= pack ( "N", length($words) ) . $words; # req words
+	$req .= pack ( "N/a*", $index ); # req index
+	$req .= pack ( "N/a*", $self->{_string_encoder}->($words)); # req words
 
 	# options
 	$req .= pack ( "N/a*", $opts->{"before_match"});
@@ -1701,7 +1752,7 @@ sub BuildExcerpts {
 	$req .= pack ( "N", scalar(@$docs) );
 	foreach my $doc (@$docs) {
 		croak('BuildExcerpts: Found empty document in $docs') unless ($doc);
-		$req .= pack("N/a*", $doc);
+		$req .= pack("N/a*", $self->{_string_encoder}->($doc));
 	}
 
 	##########################
@@ -1725,7 +1776,7 @@ sub BuildExcerpts {
 			$self->_Error("incomplete reply");
 			return;
 		}
-		push(@$res, substr ( $response, $pos, $len ));
+		push(@$res, $self->{_string_decoder}->( substr ( $response, $pos, $len ) ));
 		$pos += $len;
         }
         return $res;
@@ -1768,9 +1819,9 @@ sub BuildKeywords {
     my $fp = $self->_Connect() or return;
 
     # v.1.0 req
-    my $req = pack("N/a*", $query);
+    my $req = pack("N/a*", $self->{_string_encoder}->($query) );
     $req .= pack("N/a*", $index);
-    $req .= pack("N", $hits);
+    $req .= pack("N", $self->{_string_encoder}->($hits) );
 
     ##################
     # send query, get response
@@ -1794,10 +1845,10 @@ sub BuildKeywords {
     for (my $i=0; $i < $nwords; $i++ ) {
 	my $len = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
 
-	my $tokenized = $len ? substr ( $response, $p, $len ) : ""; $p += $len;
+	my $tokenized = $len ? $self->{_string_decoder}->( substr ( $response, $p, $len ) ) : ""; $p += $len;
 	$len = unpack("N", substr ( $response, $p, 4 ) ); $p += 4;
 
-	my $normalized = $len ? substr ( $response, $p, $len ) : ""; $p += $len;
+	my $normalized = $len ? $self->{_string_decoder}->( substr ( $response, $p, $len ) ) : ""; $p += $len;
 	my %data = ( tokenized => $tokenized, normalized => $normalized );
 	
 	if ($hits) {
@@ -2035,7 +2086,7 @@ L<http://www.sphinxsearch.com>
 
 =head1 NOTES
 
-There is a bundled Sphinx.pm in the contrib area of the Sphinx source
+There is (or was) a bundled Sphinx.pm in the contrib area of the Sphinx source
 distribution, which was used as the starting point of Sphinx::Search.
 Maintenance of that version appears to have lapsed at sphinx-0.9.7, so many of
 the newer API calls are not available there.  Sphinx::Search is mostly
