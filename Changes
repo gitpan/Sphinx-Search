@@ -59,3 +59,10 @@ Revision history for Sphinx-Search
 
 0.18	2009-04-09
 	Included missing test files in CPAN package.
+
+0.19	Removed request for GMP implementation of Math::BigInt due to apparent
+	bug in Math::BigInt on 32 bit architectures (Math::BigInt::Calc and
+	Math::BigInt::GMP give different answers for 32 bit shift of long
+	integer)
+	Fixed incorrect setting for _max_id that was causing results with 64 bit IDs to be
+	ignored unless SetIDRange() had been called.

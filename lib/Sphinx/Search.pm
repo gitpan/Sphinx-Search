@@ -8,7 +8,7 @@ use base 'Exporter';
 use Carp;
 use Socket;
 use Config;
-use Math::BigInt lib => 'GMP';
+use Math::BigInt;
 use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Encode qw/encode_utf8 decode_utf8/;
@@ -21,7 +21,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.18 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
+Use version 0.19 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
 
 Use version 0.15 for Sphinx 0.9.9-svn-r1674
 
@@ -43,7 +43,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.18';
+our $VERSION = '0.19';
 
 =head1 SYNOPSIS
 
@@ -150,16 +150,8 @@ sub _sphPackI64 {
     my $v = shift;
 
     # x64 route
-    if ( $self->{_longsize} >= 8 ) {
-	my $i = int($v);
-	return pack ( "NN", $i>>32, $i & 4294967295 );
-    }
-
-    # x32 route, BigInt
-    my $vb = Math::BigInt->new($v);
-    my $l = $vb->copy->band ( 4294967295 );
-    my $h = $vb->copy->brsft ( 32 );
-    return pack ( "NN", $h, $l );
+    my $i = $self->{_longsize} >= 8 ? int($v) : Math::BigInt->new("$v");
+    return pack ( "NN", $i>>32, $i & 4294967295 );
 }
 
 # portably pack numeric to 64 unsigned bits, network order
@@ -167,17 +159,8 @@ sub _sphPackU64 {
     my $self = shift;
     my $v = shift;
 
-    # x64 route
-    if ( $self->{_longsize} >= 8 ) {
-	my $i = int($v);
-	return pack ( "NN", $i>>32, $i & 4294967295 );
-    }
-
-    # x32 route, BigInt
-    my $vb = Math::BigInt->new($v);
-    my $l = $vb->copy->band ( 4294967295 );
-    my $h = $vb->copy->brsft ( 32 );
-    return pack ( "NN", $h, $l );
+    my $i = $self->{_longsize} >= 8  ? int($v) : Math::BigInt->new("$v");
+    return pack ( "NN", $i>>32, $i & 4294967295 );
 }
 
 sub _sphPackI64array {
@@ -287,7 +270,7 @@ sub new {
 	_sort		=> SPH_SORT_RELEVANCE,
 	_sortby		=> "",
 	_min_id		=> 0,
-	_max_id		=> 0xFFFFFFFF,
+	_max_id		=> 0,
 	_filters	=> [],
 	_groupby	=> "",
 	_groupdistinct	=> "",
@@ -308,7 +291,7 @@ sub new {
 	# per-reply fields (for single-query case)
 	_error		=> '',
 	_warning	=> '',
-	_connerror      => '',,
+	_connerror      => '',
 	
 	# request storage (for multi-query case)
 	_reqs           => [],

@@ -16,6 +16,7 @@ ok($sphinx, "Constructor");
 my @tests = ( 0, 1, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, '4294967296', '9223372036854775807', '9223372036854775808', '18446744073709551615');
 
 for my $x (@tests) {
+#    print $x . " " . $sphinx->_sphUnpackU64($sphinx->_sphPackU64($x)) . "\n";
     ok($sphinx->_sphUnpackU64($sphinx->_sphPackU64($x)) == $x, "64 bit unsigned transfer $x");
 }
 
