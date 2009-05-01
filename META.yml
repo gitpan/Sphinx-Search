@@ -1,12 +1,17 @@
-# http://module-build.sourceforge.net/META-spec.html
-#XXXXXXX This is a prototype!!!  It will change in the future!!! XXXXX#
-name:         Sphinx-Search
-version:      0.19
-version_from: lib/Sphinx/Search.pm
-installdirs:  site
-requires:
+--- #YAML:1.0
+name:                Sphinx-Search
+version:             0.20
+abstract:            Sphinx search engine API Perl client
+license:             ~
+author:              
+    - Jon Schutz <jon@jschutz.net>
+generated_by:        ExtUtils::MakeMaker version 6.42
+distribution_type:   module
+requires:     
     Carp:                          0
+    Class::Accessor::Fast:         0
     Config:                        0
+    Data::Dumper:                  0
     DBI:                           0
     Errno:                         0
     Fcntl:                         0
@@ -15,6 +20,6 @@ requires:
     Path::Class:                   0
     Socket:                        0
     Test::More:                    0
-
-distribution_type: module
-generated_by: ExtUtils::MakeMaker version 6.30
+meta-spec:
+    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
+    version: 1.3

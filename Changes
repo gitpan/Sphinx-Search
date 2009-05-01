@@ -66,3 +66,5 @@ Revision history for Sphinx-Search
 	integer)
 	Fixed incorrect setting for _max_id that was causing results with 64 bit IDs to be
 	ignored unless SetIDRange() had been called.
+
+0.20	Fixed dependency list to prevent failing tests on some systems.
