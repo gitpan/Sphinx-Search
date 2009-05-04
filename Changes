@@ -68,3 +68,6 @@ Revision history for Sphinx-Search
 	ignored unless SetIDRange() had been called.
 
 0.20	Fixed dependency list to prevent failing tests on some systems.
+
+0.21	Fixed another missing dependency (Encode)
+	Fixed 64 bit ID signed transfer on 32 bit systems compiled with -Duse64bitint.

@@ -21,6 +21,7 @@ WriteMakefile(
 	'Fcntl' => 0,
 	'Class::Accessor::Fast' => 0,
 	'Data::Dumper' => 0,
+	'Encode' => 0,
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Sphinx-Search-*' },
