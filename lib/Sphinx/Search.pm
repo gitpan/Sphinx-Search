@@ -13,6 +13,9 @@ use IO::Socket::INET;
 use IO::Socket::UNIX;
 use Encode qw/encode_utf8 decode_utf8/;
 
+my $is_native64 = $Config{longsize} == 8 || defined $Config{use64bitint} || defined $Config{use64bitall};
+    
+
 =head1 NAME
 
 Sphinx::Search - Sphinx search engine API Perl client
@@ -21,7 +24,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.21 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
+Use version 0.22 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
 
 Use version 0.15 for Sphinx 0.9.9-svn-r1674
 
@@ -43,7 +46,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 =head1 SYNOPSIS
 
@@ -150,7 +153,7 @@ sub _sphPackI64 {
     my $v = shift;
 
     # x64 route
-    my $i = $self->{_native64} ? int($v) : Math::BigInt->new("$v");
+    my $i = $is_native64 ? int($v) : Math::BigInt->new("$v");
     return pack ( "NN", $i>>32, $i & 4294967295 );
 }
 
@@ -159,7 +162,7 @@ sub _sphPackU64 {
     my $self = shift;
     my $v = shift;
 
-    my $i = $self->{_native64} ? int($v) : Math::BigInt->new("$v");
+    my $i = $is_native64 ? int($v) : Math::BigInt->new("$v");
     return pack ( "NN", $i>>32, $i & 4294967295 );
 }
 
@@ -181,7 +184,7 @@ sub _sphUnpackU64
     my ($h,$l) = unpack ( "N*N*", $v );
 
     # x64 route
-    return ($h<<32) + $l if $self->{_native64};
+    return ($h<<32) + $l if $is_native64;
 
     # x32 route, BigInt
     $h = Math::BigInt->new($h);
@@ -201,7 +204,7 @@ sub _sphUnpackI64
     my $neg = ($h & 0x80000000) ? 1 : 0;
 
     # x64 route
-    if ( $self->{_native64} ) {
+    if ( $is_native64 ) {
 	return -(~(($h<<32) + $l) + 1) if $neg;
 	return ($h<<32) + $l;
     }
@@ -296,8 +299,6 @@ sub new {
 	# request storage (for multi-query case)
 	_reqs           => [],
 	_timeout        => 0,
-
-	_native64      => $Config{longsize} == 8 || defined $Config{use64bitint},
 
 	_string_encoder => \&encode_utf8,
 	_string_decoder => \&decode_utf8,

@@ -60,14 +60,21 @@ Revision history for Sphinx-Search
 0.18	2009-04-09
 	Included missing test files in CPAN package.
 
-0.19	Removed request for GMP implementation of Math::BigInt due to apparent
+0.19	2009-04-10
+	Removed request for GMP implementation of Math::BigInt due to apparent
 	bug in Math::BigInt on 32 bit architectures (Math::BigInt::Calc and
 	Math::BigInt::GMP give different answers for 32 bit shift of long
 	integer)
 	Fixed incorrect setting for _max_id that was causing results with 64 bit IDs to be
 	ignored unless SetIDRange() had been called.
 
-0.20	Fixed dependency list to prevent failing tests on some systems.
+0.20	2009-05-01
+	Fixed dependency list to prevent failing tests on some systems.
 
-0.21	Fixed another missing dependency (Encode)
+0.21	2009-05-04
+	Fixed another missing dependency (Encode)
 	Fixed 64 bit ID signed transfer on 32 bit systems compiled with -Duse64bitint.
+
+0.22    2009-05-07 
+     	Moved use of Config variables out of new so Config is only accessed at startup, to avoid delays in
+	new(). (rt.cpan.org #45789)

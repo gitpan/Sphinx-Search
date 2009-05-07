@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:                Sphinx-Search
-version:             0.21
+version:             0.22
 abstract:            Sphinx search engine API Perl client
 license:             ~
 author:              
