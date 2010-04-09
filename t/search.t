@@ -63,6 +63,7 @@ sub run_all_tests {
 # Basic test on 'a'
 my $results = $sphinx->Query("a");
 ok($results, "Results for 'a'");
+
 print $sphinx->GetLastError unless $results;
 ok($results->{total_found} == 4, "total_found for 'a'");
 ok($results->{total} == 4, "total for 'a'");
@@ -76,7 +77,7 @@ is_deeply($results->{'words'},
 	  },
 	  "words for 'a'");
 is_deeply($results->{'fields'}, [ qw/field1 field2/ ], "fields for 'a'");
-is_deeply($results->{'attrs'}, { attr1 => 1, lat => 5, long => 5 }, "attributes for 'a'");
+is_deeply($results->{'attrs'}, { attr1 => 1, lat => 5, long => 5, stringattr => 7 }, "attributes for 'a'");
 my $weights = 1;
 $weights *= $_->{weight} for @{$results->{matches}};
 ok($weights == 1, "weights for 'a'");

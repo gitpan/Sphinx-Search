@@ -78,3 +78,8 @@ Revision history for Sphinx-Search
 0.22    2009-05-07 
      	Moved use of Config variables out of new so Config is only accessed at startup, to avoid delays in
 	new(). (rt.cpan.org #45789)
+
+0.23_02 2010-04-04
+	Updated for compatibility with svn-r2269.
+	rt.cpan.org #54698 - doc fix
+	rt.cpan.org #56406 - string attributes

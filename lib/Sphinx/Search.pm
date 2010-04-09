@@ -24,6 +24,8 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
+Use version 0.23_02 for Sphinx svn-2269 (experimental)
+
 Use version 0.22 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
 
 Use version 0.15 for Sphinx 0.9.9-svn-r1674
@@ -46,17 +48,17 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.22';
+our $VERSION = '0.23_02';
 
 =head1 SYNOPSIS
 
     use Sphinx::Search;
 
-    $sphinx = Sphinx::Search->new();
+    $sph = Sphinx::Search->new();
 
-    $results = $sphinx->SetMatchMode(SPH_MATCH_ALL)
-                      ->SetSortMode(SPH_SORT_RELEVANCE)
-                      ->Query("search terms");
+    $results = $sph->SetMatchMode(SPH_MATCH_ALL)
+                   ->SetSortMode(SPH_SORT_RELEVANCE)
+                   ->Query("search terms");
 
 =head1 DESCRIPTION
 
@@ -83,13 +85,16 @@ use constant SEARCHD_COMMAND_UPDATE	=> 2;
 use constant SEARCHD_COMMAND_KEYWORDS	=> 3;
 use constant SEARCHD_COMMAND_PERSIST	=> 4;
 use constant SEARCHD_COMMAND_STATUS	=> 5;
+use constant SEARCHD_COMMAND_QUERY	=> 6;
+use constant SEARCHD_COMMAND_FLUSHATTRS	=> 7;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x116;
-use constant VER_COMMAND_EXCERPT	=> 0x100;
+use constant VER_COMMAND_SEARCH		=> 0x117;
+use constant VER_COMMAND_EXCERPT	=> 0x101;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
 use constant VER_COMMAND_STATUS         => 0x100;
+use constant VER_COMMAND_FLUSHATTRS     => 0x100;
 
 # known searchd status codes
 use constant SEARCHD_OK			=> 0;
@@ -113,6 +118,9 @@ use constant SPH_RANK_NONE              => 2; # no ranking, all matches get a we
 use constant SPH_RANK_WORDCOUNT         => 3; # simple word-count weighting, rank is a weighted sum of per-field keyword occurence counts
 use constant SPH_RANK_PROXIMITY         => 4;
 use constant SPH_RANK_MATCHANY          => 5;
+use constant SPH_RANK_FIELDMASK         => 6;
+use constant SPH_RANK_SPH04             => 7;
+use constant SPH_RANK_TOTAL             => 8;
 
 # known sort modes
 use constant SPH_SORT_RELEVANCE		=> 0;
@@ -134,6 +142,7 @@ use constant SPH_ATTR_ORDINAL		=> 3;
 use constant SPH_ATTR_BOOL		=> 4;
 use constant SPH_ATTR_FLOAT		=> 5;
 use constant SPH_ATTR_BIGINT		=> 6;
+use constant SPH_ATTR_STRING		=> 7;
 use constant SPH_ATTR_MULTI		=> 0x40000000;
 
 # known grouping functions
@@ -261,7 +270,7 @@ sub new {
     my $self = {
 	# per=client-object settings
 	_host		=> 'localhost',
-	_port		=> 3312,
+	_port		=> 9312,
 	_path           => undef,
 	_socket         => undef,
 
@@ -427,7 +436,7 @@ sub SetEncoders {
     $sph->SetServer($path, $port);
 
 In the first form, sets the host (string) and port (integer) details for the
-searchd server using a network (INET) socket.
+searchd server using a network (INET) socket (default is localhost:9312).
 
 In the second form, where $path is a local filesystem path (optionally prefixed
 by 'unix://'), sets the client to access the searchd server via a local (UNIX
@@ -493,7 +502,12 @@ sub _Send {
 sub _Connect {
 	my $self = shift;
 	
-	return $self->{_socket} if $self->{_socket};
+	if ($self->{_socket}) {
+	    # persistent connection, check it
+	    return $self->{_socket} if $self->{_socket}->connected;
+	    # force reopen
+	    undef $self->{_socket};
+	}
 
 	my $debug = $self->{_debug};
 	my $str_dest = $self->{_path} ? 'unix://' . $self->{_path} : "$self->{_host}:$self->{_port}";
@@ -745,11 +759,8 @@ sub SetRankingMode {
     my $self = shift;
     my $ranker = shift;
 
-    croak("Unknown ranking mode: $ranker") unless ( $ranker==SPH_RANK_PROXIMITY_BM25
-						    || $ranker==SPH_RANK_BM25
-						    || $ranker==SPH_RANK_NONE
-						    || $ranker==SPH_RANK_WORDCOUNT
-						    || $ranker==SPH_RANK_PROXIMITY );
+    croak("Unknown ranking mode: $ranker") unless ( $ranker >= 0
+						    && $ranker < SPH_RANK_TOTAL );
 
     $self->{_ranker} = $ranker;
     return $self;
@@ -909,7 +920,7 @@ sub SetIDRange {
     $sph->SetFilter($attr, \@values, $exclude);
 
 Sets the results to be filtered on the given attribute.  Only results which have
-attributes matching the given (numeric) values will be returned.
+attributes matching the given values will be returned.
 
 This may be called multiple times with different attributes to select on
 multiple attributes.
@@ -927,9 +938,6 @@ sub SetFilter {
     croak("values is not an array reference") unless (ref($values) eq 'ARRAY');
     croak("values reference is empty") unless (scalar(@$values));
 
-    foreach my $value (@$values) {
-	croak("value $value is not numeric") unless ($value =~ m/$num_re/);
-    }
     push(@{$self->{_filters}}, {
 	type => SPH_FILTER_VALUES,
 	attr => $attribute,
@@ -1602,6 +1610,10 @@ sub RunQueries {
 			push(@{$data->{$attr}}, $val);
 		    }
 		}
+		elsif ($attrs{$attr} == SPH_ATTR_STRING) {
+		    $data->{$attr} = $self->{_string_decoder}->(substr ($response, $p, $val));
+		    $p += $val;
+		}
 		else {
 		    $data->{$attr} = $val;
 		}
@@ -1676,6 +1688,10 @@ A hash which contains additional optional highlighting parameters:
 
 =item weight_order 
 
+=item query_mode
+
+=item force_all_words
+
 =back
 
 =back
@@ -1708,18 +1724,22 @@ sub BuildExcerpts {
 	$opts->{"single_passage"} ||= 0;
 	$opts->{"use_boundaries"} ||= 0;
 	$opts->{"weight_order"} ||= 0;
+	$opts->{"query_mode"} ||= 0;
+	$opts->{"force_all_words"} ||= 0;
 
 	##################
 	# build request
 	##################
 
-	# v.1.0 req
+	# v.1.01 req
 	my $req;
 	my $flags = 1; # remove spaces
 	$flags |= 2 if ( $opts->{"exact_phrase"} );
 	$flags |= 4 if ( $opts->{"single_passage"} );
 	$flags |= 8 if ( $opts->{"use_boundaries"} );
 	$flags |= 16 if ( $opts->{"weight_order"} );
+	$flags |= 32 if ( $opts->{"query_mode"} );
+	$flags |= 64 if ( $opts->{"force_all_words"} );
 	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
 
 	$req .= pack ( "N/a*", $index ); # req index
@@ -2063,6 +2083,29 @@ sub Status {
     return \%res;
 }
     
+=head2 FlushAttributes
+
+=cut
+
+sub FlushAttributes {
+    my $self = shift;
+
+    my $fp = $self->_Connect() or return;
+    
+    my $req = pack("nnN", SEARCHD_COMMAND_FLUSHATTRS, VER_COMMAND_FLUSHATTRS, 0 ); # len=0
+    $self->_Send($fp, $req) or return;
+    my $response = $self->_GetResponse ( $fp, VER_COMMAND_FLUSHATTRS );
+    return unless $response;
+    
+    my $tag = -1;
+    if (length($response) == 4) {
+	$tag = unpack ( "N*", substr ( $response, 0, 4 ) );
+    }
+    else {
+	$self->_Error("unexpected response length");
+    }
+    return $tag;
+}    
 
 =head1 SEE ALSO
 
