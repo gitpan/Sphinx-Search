@@ -48,7 +48,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.23_02';
+our $VERSION = '0.23_03';
 
 =head1 SYNOPSIS
 
@@ -579,6 +579,11 @@ sub _GetResponse {
 	};
 
 	my ($status, $ver, $len ) = unpack("n2N", $header);
+	if ( ! defined($len) ) {
+	    $self->_Error("read failed: $!");
+	    return 0;
+	}
+
         my $response = q{};
 	my $lasterror = q{};
 	my $lentotal = 0;

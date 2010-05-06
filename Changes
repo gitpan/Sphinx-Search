@@ -83,3 +83,7 @@ Revision history for Sphinx-Search
 	Updated for compatibility with svn-r2269.
 	rt.cpan.org #54698 - doc fix
 	rt.cpan.org #56406 - string attributes
+
+0.23_03 2010-05-06
+	rt.cpan.org #57171 - fixed occasional warnings due to uninitialised
+	values
