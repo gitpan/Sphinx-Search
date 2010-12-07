@@ -2,11 +2,6 @@ package TestDB;
 
 use strict;
 use warnings;
-
-package TestDB;
-
-use strict;
-use warnings;
 use base qw(Class::Accessor::Fast);
 use DBI;
 use File::SearchPath qw/searchpath/;

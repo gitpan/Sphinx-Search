@@ -87,3 +87,6 @@ Revision history for Sphinx-Search
 0.23_03 2010-05-06
 	rt.cpan.org #57171 - fixed occasional warnings due to uninitialised
 	values
+
+0.24	2010-12-07
+	Updated for compatibility with 1.10-beta (svn-r2420)

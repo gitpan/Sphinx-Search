@@ -1,26 +1,34 @@
 --- #YAML:1.0
-name:                Sphinx-Search
-version:             0.23_03
-abstract:            Sphinx search engine API Perl client
-license:             ~
-author:              
+name:               Sphinx-Search
+version:            0.24
+abstract:           Sphinx search engine API Perl client
+author:
     - Jon Schutz <jon@jschutz.net>
-generated_by:        ExtUtils::MakeMaker version 6.42
-distribution_type:   module
-requires:     
-    Carp:                          0
-    Class::Accessor::Fast:         0
-    Config:                        0
-    Data::Dumper:                  0
-    DBI:                           0
-    Encode:                        0
-    Errno:                         0
-    Fcntl:                         0
-    File::SearchPath:              0
-    Math::BigInt:                  0
-    Path::Class:                   0
-    Socket:                        0
-    Test::More:                    0
+license:            unknown
+distribution_type:  module
+configure_requires:
+    ExtUtils::MakeMaker:  0
+build_requires:
+    ExtUtils::MakeMaker:  0
+requires:
+    Carp:                 0
+    Class::Accessor::Fast:  0
+    Config:               0
+    Data::Dumper:         0
+    DBI:                  0
+    Encode:               0
+    Errno:                0
+    Fcntl:                0
+    File::SearchPath:     0
+    Math::BigInt:         0
+    Path::Class:          0
+    Socket:               0
+    Test::More:           0
+no_index:
+    directory:
+        - t
+        - inc
+generated_by:       ExtUtils::MakeMaker version 6.56
 meta-spec:
-    url:     http://module-build.sourceforge.net/META-spec-v1.3.html
-    version: 1.3
+    url:      http://module-build.sourceforge.net/META-spec-v1.4.html
+    version:  1.4

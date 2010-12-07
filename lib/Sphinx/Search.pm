@@ -24,6 +24,8 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
+Use version 0.24 for Sphinx-1.10-beta (svn-2420)
+
 Use version 0.23_02 for Sphinx svn-2269 (experimental)
 
 Use version 0.22 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
@@ -48,7 +50,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.23_03';
+our $VERSION = '0.24';
 
 =head1 SYNOPSIS
 
@@ -90,7 +92,7 @@ use constant SEARCHD_COMMAND_FLUSHATTRS	=> 7;
 
 # current client-side command implementation versions
 use constant VER_COMMAND_SEARCH		=> 0x117;
-use constant VER_COMMAND_EXCERPT	=> 0x101;
+use constant VER_COMMAND_EXCERPT	=> 0x102;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
 use constant VER_COMMAND_STATUS         => 0x100;
@@ -1683,6 +1685,10 @@ A hash which contains additional optional highlighting parameters:
 
 =item limit - max excerpt size in symbols (codepoints), default is 256
 
+=item limit_passages - Limits the maximum number of passages that can be included into the snippet. Integer, default is 0 (no limit).
+
+=item limit_words - Limits the maximum number of keywords that can be included into the snippet. Integer, default is 0 (no limit). 
+
 =item around - how many words to highlight around each match, default is 5
 
 =item exact_phrase - whether to highlight exact phrase matches only, default is false
@@ -1691,11 +1697,19 @@ A hash which contains additional optional highlighting parameters:
 
 =item use_boundaries
 
-=item weight_order 
+=item weight_order - Whether to sort the extracted passages in order of relevance (decreasing weight), or in order of appearance in the document (increasing position). Boolean, default is false.
 
-=item query_mode
+=item query_mode - Whether to handle $words as a query in extended syntax, or as a bag of words (default behavior). For instance, in query mode ("one two" | "three four") will only highlight and include those occurrences "one two" or "three four" when the two words from each pair are adjacent to each other. In default mode, any single occurrence of "one", "two", "three", or "four" would be highlighted. Boolean, default is false. 
 
-=item force_all_words
+=item force_all_words - Ignores the snippet length limit until it includes all the keywords. Boolean, default is false. 
+
+=item start_passage_id - Specifies the starting value of %PASSAGE_ID% macro (that gets detected and expanded in before_match, after_match strings). Integer, default is 1. 
+
+=item load_files - Whether to handle $docs as data to extract snippets from (default behavior), or to treat it as file names, and load data from specified files on the server side. Boolean, default is false. 
+
+=item html_strip_mode - HTML stripping mode setting. Defaults to "index", which means that index settings will be used. The other values are "none" and "strip", that forcibly skip or apply stripping irregardless of index settings; and "retain", that retains HTML markup and protects it from highlighting. The "retain" mode can only be used when highlighting full documents and thus requires that no snippet size limits are set. String, allowed values are "none", "strip", "index", and "retain".
+
+=item allow_empty - Allows empty string to be returned as highlighting result when a snippet could not be generated (no keywords match, or no passages fit the limit). By default, the beginning of original text would be returned instead of an empty string. Boolean, default is false. 
 
 =back
 
@@ -1724,6 +1738,8 @@ sub BuildExcerpts {
 	$opts->{"after_match"} ||= "</b>";
 	$opts->{"chunk_separator"} ||= " ... ";
 	$opts->{"limit"} ||= 256;
+	$opts->{"limit_passages"} ||= 0;
+	$opts->{"limit_words"} ||= 0;
 	$opts->{"around"} ||= 5;
 	$opts->{"exact_phrase"} ||= 0;
 	$opts->{"single_passage"} ||= 0;
@@ -1731,12 +1747,16 @@ sub BuildExcerpts {
 	$opts->{"weight_order"} ||= 0;
 	$opts->{"query_mode"} ||= 0;
 	$opts->{"force_all_words"} ||= 0;
+	$opts->{"start_passage_id"} ||= 1;
+	$opts->{"load_files"} ||= 0;
+	$opts->{"html_strip_mode"} ||= "index";
+	$opts->{"allow_empty"} ||= 0;
 
 	##################
 	# build request
 	##################
 
-	# v.1.01 req
+	# v.1.2 req
 	my $req;
 	my $flags = 1; # remove spaces
 	$flags |= 2 if ( $opts->{"exact_phrase"} );
@@ -1745,6 +1765,8 @@ sub BuildExcerpts {
 	$flags |= 16 if ( $opts->{"weight_order"} );
 	$flags |= 32 if ( $opts->{"query_mode"} );
 	$flags |= 64 if ( $opts->{"force_all_words"} );
+	$flags |= 128 if ( $opts->{"load_files"} );
+	$flags |= 256 if ( $opts->{"allow_empty"} );
 	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
 
 	$req .= pack ( "N/a*", $index ); # req index
@@ -1754,8 +1776,11 @@ sub BuildExcerpts {
 	$req .= pack ( "N/a*", $opts->{"before_match"});
 	$req .= pack ( "N/a*", $opts->{"after_match"});
 	$req .= pack ( "N/a*", $opts->{"chunk_separator"});
-	$req .= pack ( "N", int($opts->{"limit"}) );
-	$req .= pack ( "N", int($opts->{"around"}) );
+	$req .= pack ( "NN", int($opts->{"limit"}), int($opts->{"around"}) );
+	$req .= pack ( "NNN", int($opts->{"limit_passages"}), 
+		       int($opts->{"limit_words"}), 
+		       int($opts->{"start_passage_id"}) ); # v1.2
+	$req .= pack ( "N/a*", $opts->{"html_strip_mode"});
 
 	# documents
 	$req .= pack ( "N", scalar(@$docs) );
@@ -1771,9 +1796,7 @@ sub BuildExcerpts {
 	$req = pack ( "nnN/a*", SEARCHD_COMMAND_EXCERPT, VER_COMMAND_EXCERPT, $req); # add header
 	$self->_Send($fp, $req);
 	
-	my $response = $self->_GetResponse($fp, VER_COMMAND_EXCERPT);
-	return unless $response;
-
+	my $response = $self->_GetResponse($fp, VER_COMMAND_EXCERPT) or return;
 	my ($pos, $i) = 0;
 	my $res = [];	# Empty hash ref
         my $rlen = length($response);
