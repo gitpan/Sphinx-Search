@@ -24,9 +24,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.25_02 for Sphinx svn-2575
-
-Use version 0.24.1 for Sphinx-1.10-beta (svn-2420)
+Use version 0.240.1 for Sphinx-1.10-beta (svn-2420)
 
 Use version 0.23_02 for Sphinx svn-2269 (experimental)
 
@@ -52,7 +50,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.25_02';
+our $VERSION = '0.240.1';
 
 =head1 SYNOPSIS
 
@@ -98,7 +96,7 @@ use constant SEARCHD_COMMAND_FLUSHATTRS	=> 7;
 
 # current client-side command implementation versions
 use constant VER_COMMAND_SEARCH		=> 0x117;
-use constant VER_COMMAND_EXCERPT	=> 0x103;
+use constant VER_COMMAND_EXCERPT	=> 0x102;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
 use constant VER_COMMAND_STATUS         => 0x100;
@@ -1717,10 +1715,6 @@ A hash which contains additional optional highlighting parameters:
 
 =item allow_empty - Allows empty string to be returned as highlighting result when a snippet could not be generated (no keywords match, or no passages fit the limit). By default, the beginning of original text would be returned instead of an empty string. Boolean, default is false. 
 
-=item passage_boundary
-
-=item emit_zones
-
 =back
 
 =back
@@ -1761,8 +1755,6 @@ sub BuildExcerpts {
 	$opts->{"load_files"} ||= 0;
 	$opts->{"html_strip_mode"} ||= "index";
 	$opts->{"allow_empty"} ||= 0;
-	$opts->{"passage_boundary"} ||= "none";
-	$opts->{"emit_zones"} ||= 0;
 
 	##################
 	# build request
@@ -1779,7 +1771,6 @@ sub BuildExcerpts {
 	$flags |= 64 if ( $opts->{"force_all_words"} );
 	$flags |= 128 if ( $opts->{"load_files"} );
 	$flags |= 256 if ( $opts->{"allow_empty"} );
-	$flags |= 512 if ( $opts->{"emit_zones"} );
 	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
 
 	$req .= pack ( "N/a*", $index ); # req index
@@ -1794,7 +1785,6 @@ sub BuildExcerpts {
 		       int($opts->{"limit_words"}), 
 		       int($opts->{"start_passage_id"}) ); # v1.2
 	$req .= pack ( "N/a*", $opts->{"html_strip_mode"});
-	$req .= pack ( "N/a*", $opts->{"passage_boundary"});
 
 	# documents
 	$req .= pack ( "N", scalar(@$docs) );
