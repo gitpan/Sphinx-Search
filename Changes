@@ -91,5 +91,5 @@ Revision history for Sphinx-Search
 0.24	2010-12-07
 	Updated for compatibility with 1.10-beta (svn-r2420)
 
-0.25_01 2010-12-07
-	Updated for compatibility with svn-r2575
+0.24.1  2010-12-16
+	rt.cpan.org #63945 - fixed missing constants

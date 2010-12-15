@@ -24,9 +24,7 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.25_01 for Sphinx svn-2575
-
-Use version 0.24 for Sphinx-1.10-beta (svn-2420)
+Use version 0.24.1 for Sphinx-1.10-beta (svn-2420)
 
 Use version 0.23_02 for Sphinx svn-2269 (experimental)
 
@@ -52,7 +50,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.25_01';
+our $VERSION = '0.24.1';
 
 =head1 SYNOPSIS
 
@@ -76,10 +74,14 @@ our @EXPORT = qw(
 		SPH_MATCH_ALL SPH_MATCH_ANY SPH_MATCH_PHRASE SPH_MATCH_BOOLEAN SPH_MATCH_EXTENDED
 		SPH_MATCH_FULLSCAN SPH_MATCH_EXTENDED2
 		SPH_RANK_PROXIMITY_BM25 SPH_RANK_BM25 SPH_RANK_NONE SPH_RANK_WORDCOUNT
+                SPH_RANK_PROXIMITY SPH_RANK_MATCHANY SPH_RANK_FIELDMASK SPH_RANK_SPH04 
+                SPH_RANK_TOTAL
 		SPH_SORT_RELEVANCE SPH_SORT_ATTR_DESC SPH_SORT_ATTR_ASC SPH_SORT_TIME_SEGMENTS
 		SPH_SORT_EXTENDED SPH_SORT_EXPR
 		SPH_GROUPBY_DAY SPH_GROUPBY_WEEK SPH_GROUPBY_MONTH SPH_GROUPBY_YEAR SPH_GROUPBY_ATTR
 		SPH_GROUPBY_ATTRPAIR
+                SPH_ATTR_INTEGER SPH_ATTR_TIMESTAMP SPH_ATTR_ORDINAL SPH_ATTR_BOOL
+                SPH_ATTR_FLOAT SPH_ATTR_BIGINT SPH_ATTR_STRING SPH_ATTR_MULTI
 		);
 
 # known searchd commands
@@ -94,7 +96,7 @@ use constant SEARCHD_COMMAND_FLUSHATTRS	=> 7;
 
 # current client-side command implementation versions
 use constant VER_COMMAND_SEARCH		=> 0x117;
-use constant VER_COMMAND_EXCERPT	=> 0x103;
+use constant VER_COMMAND_EXCERPT	=> 0x102;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
 use constant VER_COMMAND_STATUS         => 0x100;
@@ -1713,10 +1715,6 @@ A hash which contains additional optional highlighting parameters:
 
 =item allow_empty - Allows empty string to be returned as highlighting result when a snippet could not be generated (no keywords match, or no passages fit the limit). By default, the beginning of original text would be returned instead of an empty string. Boolean, default is false. 
 
-=item passage_boundary
-
-=item emit_zones
-
 =back
 
 =back
@@ -1757,8 +1755,6 @@ sub BuildExcerpts {
 	$opts->{"load_files"} ||= 0;
 	$opts->{"html_strip_mode"} ||= "index";
 	$opts->{"allow_empty"} ||= 0;
-	$opts->{"passage_boundary"} ||= "none";
-	$opts->{"emit_zones"} ||= 0;
 
 	##################
 	# build request
@@ -1775,7 +1771,6 @@ sub BuildExcerpts {
 	$flags |= 64 if ( $opts->{"force_all_words"} );
 	$flags |= 128 if ( $opts->{"load_files"} );
 	$flags |= 256 if ( $opts->{"allow_empty"} );
-	$flags |= 512 if ( $opts->{"emit_zones"} );
 	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
 
 	$req .= pack ( "N/a*", $index ); # req index
@@ -1790,7 +1785,6 @@ sub BuildExcerpts {
 		       int($opts->{"limit_words"}), 
 		       int($opts->{"start_passage_id"}) ); # v1.2
 	$req .= pack ( "N/a*", $opts->{"html_strip_mode"});
-	$req .= pack ( "N/a*", $opts->{"passage_boundary"});
 
 	# documents
 	$req .= pack ( "N", scalar(@$docs) );

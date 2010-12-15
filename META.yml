@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Sphinx-Search
-version:            0.25_01
+version:            0.24.1
 abstract:           Sphinx search engine API Perl client
 author:
     - Jon Schutz <jon@jschutz.net>
