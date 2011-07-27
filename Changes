@@ -99,3 +99,6 @@ Revision history for Sphinx-Search
 
 0.25_03 2011-03-23
         Fixed variable "warnings" in results hash, should be "warning"
+
+0.26.1 2011-07-27
+       Updated for compatibility with 2.0.1-beta (svn-2792)

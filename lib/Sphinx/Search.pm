@@ -24,6 +24,8 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
+Use version 0.26.1 for Sphinx-2.0.1-beta (svn-2792)
+
 Use version 0.25_03 for Sphinx svn-2575
 
 Use version 0.24.1 for Sphinx-1.10-beta (svn-2420)
@@ -52,7 +54,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.25_03';
+our $VERSION = '0.26.1';
 
 =head1 SYNOPSIS
 
@@ -93,11 +95,10 @@ use constant SEARCHD_COMMAND_UPDATE	=> 2;
 use constant SEARCHD_COMMAND_KEYWORDS	=> 3;
 use constant SEARCHD_COMMAND_PERSIST	=> 4;
 use constant SEARCHD_COMMAND_STATUS	=> 5;
-use constant SEARCHD_COMMAND_QUERY	=> 6;
 use constant SEARCHD_COMMAND_FLUSHATTRS	=> 7;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x117;
+use constant VER_COMMAND_SEARCH		=> 0x118;
 use constant VER_COMMAND_EXCERPT	=> 0x103;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
@@ -1530,7 +1531,7 @@ sub RunQueries {
     # send query, get response
     ##################
     my $nreqs = @{$self->{_reqs}};
-    my $req = pack("Na*", $nreqs, join("", @{$self->{_reqs}}));
+    my $req = pack("NNa*", 0, $nreqs, join("", @{$self->{_reqs}}));
     $req = pack ( "nnN/a*", SEARCHD_COMMAND_SEARCH, VER_COMMAND_SEARCH, $req); # add header
     $self->_Send($fp, $req);
 
