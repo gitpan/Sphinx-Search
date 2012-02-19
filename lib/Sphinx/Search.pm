@@ -24,13 +24,15 @@ Sphinx::Search - Sphinx search engine API Perl client
 
 Please note that you *MUST* install a version which is compatible with your version of Sphinx.
 
-Use version 0.26.1 for Sphinx-2.0.1-beta (svn-2792)
+Use version 0.27.1 for Sphinx-2.0.3-release (svn-r3043)
 
-Use version 0.25_03 for Sphinx svn-2575
+Use version 0.26.1 for Sphinx-2.0.1-beta (svn-r2792)
 
-Use version 0.24.1 for Sphinx-1.10-beta (svn-2420)
+Use version 0.25_03 for Sphinx svn-r2575
 
-Use version 0.23_02 for Sphinx svn-2269 (experimental)
+Use version 0.24.1 for Sphinx-1.10-beta (svn-r2420)
+
+Use version 0.23_02 for Sphinx svn-r2269 (experimental)
 
 Use version 0.22 for Sphinx 0.9.9-rc2 and later (Please read the Compatibility Note under L<SetEncoders> regarding encoding changes)
 
@@ -54,7 +56,7 @@ Use version 0.02 for Sphinx 0.9.8-cvs-20070818
 
 =cut
 
-our $VERSION = '0.26.1';
+our $VERSION = '0.27.1';
 
 =head1 SYNOPSIS
 
@@ -78,14 +80,14 @@ our @EXPORT = qw(
 		SPH_MATCH_ALL SPH_MATCH_ANY SPH_MATCH_PHRASE SPH_MATCH_BOOLEAN SPH_MATCH_EXTENDED
 		SPH_MATCH_FULLSCAN SPH_MATCH_EXTENDED2
 		SPH_RANK_PROXIMITY_BM25 SPH_RANK_BM25 SPH_RANK_NONE SPH_RANK_WORDCOUNT
-                SPH_RANK_PROXIMITY SPH_RANK_MATCHANY SPH_RANK_FIELDMASK SPH_RANK_SPH04 
+                SPH_RANK_PROXIMITY SPH_RANK_MATCHANY SPH_RANK_FIELDMASK SPH_RANK_SPH04 SPH_RANK_EXPR
                 SPH_RANK_TOTAL
 		SPH_SORT_RELEVANCE SPH_SORT_ATTR_DESC SPH_SORT_ATTR_ASC SPH_SORT_TIME_SEGMENTS
 		SPH_SORT_EXTENDED SPH_SORT_EXPR
 		SPH_GROUPBY_DAY SPH_GROUPBY_WEEK SPH_GROUPBY_MONTH SPH_GROUPBY_YEAR SPH_GROUPBY_ATTR
 		SPH_GROUPBY_ATTRPAIR
                 SPH_ATTR_INTEGER SPH_ATTR_TIMESTAMP SPH_ATTR_ORDINAL SPH_ATTR_BOOL
-                SPH_ATTR_FLOAT SPH_ATTR_BIGINT SPH_ATTR_STRING SPH_ATTR_MULTI
+                SPH_ATTR_FLOAT SPH_ATTR_BIGINT SPH_ATTR_STRING SPH_ATTR_MULTI SPH_ATTR_MULTI64
 		);
 
 # known searchd commands
@@ -98,8 +100,8 @@ use constant SEARCHD_COMMAND_STATUS	=> 5;
 use constant SEARCHD_COMMAND_FLUSHATTRS	=> 7;
 
 # current client-side command implementation versions
-use constant VER_COMMAND_SEARCH		=> 0x118;
-use constant VER_COMMAND_EXCERPT	=> 0x103;
+use constant VER_COMMAND_SEARCH		=> 0x119;
+use constant VER_COMMAND_EXCERPT	=> 0x104;
 use constant VER_COMMAND_UPDATE	        => 0x102;
 use constant VER_COMMAND_KEYWORDS       => 0x100;
 use constant VER_COMMAND_STATUS         => 0x100;
@@ -129,7 +131,8 @@ use constant SPH_RANK_PROXIMITY         => 4;
 use constant SPH_RANK_MATCHANY          => 5;
 use constant SPH_RANK_FIELDMASK         => 6;
 use constant SPH_RANK_SPH04             => 7;
-use constant SPH_RANK_TOTAL             => 8;
+use constant SPH_RANK_EXPR              => 8;
+use constant SPH_RANK_TOTAL             => 9;
 
 # known sort modes
 use constant SPH_SORT_RELEVANCE		=> 0;
@@ -152,7 +155,8 @@ use constant SPH_ATTR_BOOL		=> 4;
 use constant SPH_ATTR_FLOAT		=> 5;
 use constant SPH_ATTR_BIGINT		=> 6;
 use constant SPH_ATTR_STRING		=> 7;
-use constant SPH_ATTR_MULTI		=> 0x40000000;
+use constant SPH_ATTR_MULTI		=> 0x40000001;
+use constant SPH_ATTR_MULTI64		=> 0x40000002;
 
 # known grouping functions
 use constant SPH_GROUPBY_DAY		=> 0;
@@ -304,6 +308,7 @@ sub new {
 	_anchor         => undef,
 	_indexweights   => undef,
 	_ranker         => SPH_RANK_PROXIMITY_BM25,
+        _rankexpr       => "",
 	_maxquerytime   => 0,
 	_fieldweights   => {},
 	_overrides      => {},
@@ -740,7 +745,7 @@ sub SetMatchMode {
 
 =head2 SetRankingMode
 
-    $sph->SetRankingMode(SPH_RANK_BM25);
+    $sph->SetRankingMode(SPH_RANK_BM25, $rank_exp);
 
 Set ranking mode, which may be one of:
 
@@ -763,6 +768,22 @@ No ranking, all matches get a weight of 1
 Simple word-count weighting, rank is a weighted sum of per-field keyword
 occurence counts
 
+=item * SPH_RANK_MATCHANY
+
+Returns rank as it was computed in SPH_MATCH_ANY mode earlier, and is internally used to emulate SPH_MATCH_ANY queries.
+
+=item * SPH_RANK_FIELDMASK
+
+Returns a 32-bit mask with N-th bit corresponding to N-th fulltext field, numbering from 0. The bit will only be set when the respective field has any keyword occurences satisfiying the query.
+
+=item * SPH_RANK_SPH04
+
+SPH_RANK_SPH04 is generally based on the default SPH_RANK_PROXIMITY_BM25 ranker, but additionally boosts the matches when they occur in the very beginning or the very end of a text field. 
+
+=item * SPH_RANK_EXPR
+
+Allows the ranking formula to be specified at run time. It exposes a number of internal text factors and lets you define how the final weight should be computed from those factors.  $rank_exp should be set to the ranking expression string, e.g. to emulate SPH_RANK_PROXIMITY_BM25, use "sum(lcs*user_weight)*1000+bm25".
+
 =back
 
 Returns $sph.
@@ -772,11 +793,14 @@ Returns $sph.
 sub SetRankingMode {
     my $self = shift;
     my $ranker = shift;
+    my $rankexp = shift;
 
     croak("Unknown ranking mode: $ranker") unless ( $ranker >= 0
 						    && $ranker < SPH_RANK_TOTAL );
 
     $self->{_ranker} = $ranker;
+    $self->{_rankexpr} = $rankexp || "";
+
     return $self;
 }
    
@@ -1398,7 +1422,12 @@ sub AddQuery {
     ##################
 
     my $req;
-    $req = pack ( "NNNNN", $self->{_offset}, $self->{_limit}, $self->{_mode}, $self->{_ranker}, $self->{_sort} ); # mode and limits
+    $req = pack ( "NNNN", $self->{_offset}, $self->{_limit}, $self->{_mode}, $self->{_ranker}); # mode and limits
+
+    if ($self->{_ranker} == SPH_RANK_EXPR) {
+        $req .= pack ( "N/a*", $self->{_rankexpr});
+    }
+    $req .= pack ( "N", $self->{_sort} ); # (deprecated) sort mode
     $req .= pack ( "N/a*", $self->{_sortby});
     $req .= pack ( "N/a*", $self->{_string_encoder}->($query) ); # query itself
     $req .= pack ( "N*", scalar(@{$self->{_weights}}), @{$self->{_weights}});
@@ -1616,14 +1645,23 @@ sub RunQueries {
 		    next;
 		}
 		my $val = unpack ( "N*", substr ( $response, $p, 4 ) ); $p += 4;
-		if ($attrs{$attr} & SPH_ATTR_MULTI) {
+		if ($attrs{$attr} == SPH_ATTR_MULTI) {
 		    my $nvalues = $val;
 		    $data->{$attr} = [];
-		    while ($nvalues-->0 && $p < $max) {
+		    while ($nvalues-- > 0 && $p < $max) {
 			$val = unpack( "N*", substr ( $response, $p, 4 ) ); $p += 4;
 			push(@{$data->{$attr}}, $val);
 		    }
 		}
+                elsif ($attrs{$attr} == SPH_ATTR_MULTI64) {
+		    my $nvalues = $val;
+		    $data->{$attr} = [];
+		    while ($nvalues > 0 && $p < $max) {
+			$val = unpack( "Q*", substr ( $response, $p, 8 ) ); $p += 8;
+			push(@{$data->{$attr}}, $val);
+                        $nvalues -= 2;
+		    }
+                }
 		elsif ($attrs{$attr} == SPH_ATTR_STRING) {
 		    $data->{$attr} = $self->{_string_decoder}->(substr ($response, $p, $val));
 		    $p += $val;
@@ -1722,6 +1760,8 @@ A hash which contains additional optional highlighting parameters:
 
 =item emit_zones
 
+=item load_files_scattered
+
 =back
 
 =back
@@ -1764,6 +1804,7 @@ sub BuildExcerpts {
 	$opts->{"allow_empty"} ||= 0;
 	$opts->{"passage_boundary"} ||= "none";
 	$opts->{"emit_zones"} ||= 0;
+	$opts->{"load_files_scattered"} ||= 0;
 
 	##################
 	# build request
@@ -1781,6 +1822,7 @@ sub BuildExcerpts {
 	$flags |= 128 if ( $opts->{"load_files"} );
 	$flags |= 256 if ( $opts->{"allow_empty"} );
 	$flags |= 512 if ( $opts->{"emit_zones"} );
+	$flags |= 1024 if ( $opts->{"load_files_scattered"} );
 	$req = pack ( "NN", 0, $flags ); # mode=0, flags=$flags
 
 	$req .= pack ( "N/a*", $index ); # req index

@@ -17,6 +17,7 @@ use Path::Class;
 use Sphinx::Search;
 use Socket;
 use Data::Dumper;
+use List::MoreUtils qw/all/;
 
 use lib qw(t/testlib testlib);
 
@@ -78,9 +79,8 @@ is_deeply($results->{'words'},
 	  "words for 'a'");
 is_deeply($results->{'fields'}, [ qw/field1 field2/ ], "fields for 'a'");
 is_deeply($results->{'attrs'}, { attr1 => 1, lat => 5, long => 5, stringattr => 7 }, "attributes for 'a'");
-my $weights = 1;
-$weights *= $_->{weight} for @{$results->{matches}};
-ok($weights == 1, "weights for 'a'");
+my $weight = $results->{matches}[0]{weight};
+ok((all { $_->{weight} == $weight } @{$results->{matches}}), "weights for 'a'");
 
 # Rank order test on 'bb'
 $sphinx->SetMatchMode(SPH_MATCH_ANY)
