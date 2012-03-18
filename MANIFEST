@@ -15,4 +15,3 @@ t/setserver.t
 t/stringattr.t
 t/testlib/TestDB.pm
 
-META.json                                Module JSON meta-data (added by MakeMaker)
