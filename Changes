@@ -109,3 +109,6 @@ Revision history for Sphinx-Search
 0.27.2 2012-03-18
        Incorporated persistent connections patch from Alexey Kholodkov (rt.cpan.org #70760)
        Minor changes to fix perlcritic warnings.
+
+0.28 2012-09-28
+       Changed version number to resolve problem with PAUSE indexer.
